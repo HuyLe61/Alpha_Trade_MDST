@@ -18,7 +18,7 @@ class TradingEnvGuided(gym.Env):
         self.n_features = len(sample_df.columns)
 
         # In this case, action space isone continuous value per stock in [-1, 1] (sell ... hold ... buy).
-        # TODO: Define the Box: low=?, high=?
+        # TODO: Define the Box: low=?, high=? (fill in "...")
         self.action_space = spaces.Box(low=..., high=..., shape=(len(self.tickers),), dtype=np.float32)
 
         # Observation space: price data for each stock + balance + shares held + net worth + max net work + current step 
@@ -110,23 +110,44 @@ class TradingEnvGuided(gym.Env):
         for i, ticker in enumerate(self.tickers): 
             current_prices[ticker] = self.stock_data[ticker].iloc[self.current_step]['Close']
             ticker_action = action[i] 
+
+            # Calculate cost and update balance based on selected action
+            # TODO: Implement trading logic, fill in "..."
             if ticker_action > 0:  # Buy 
-                # Calculate number of shares to buy  
-                shares_to_buy = int(self.balance * ticker_action / current_prices[ticker])
-                cost = shares_to_buy * current_prices[ticker]
-                transaction_cost = cost * self.transaction_cost_percent  
-                self.balance -= cost + transaction_cost   
-                # Update shares held and total shares sold  
-                self.shares_held[ticker] += shares_to_buy   
+                # We want to spend a % of our balance based on the action magnitude.
+                # Hint: (Balance * Action) / Share Price
+                shares_to_buy = int(... * ... / ...)
+                
+                # Gross Cost: The raw cost of the shares without fees
+                cost = ... * ...
+                
+                # Transaction Fee: The broker fee added on top of the cost
+                transaction_cost = ... * self.transaction_cost_percent
+                
+                # Update balance based on transaction
+                self.balance -= ... + ...
+                
+                # Update inventory
+                self.shares_held[ticker] += ...
 
             elif ticker_action < 0: # Sell 
-                shares_to_sell = int(self.shares_held[ticker] * abs(ticker_action)) 
-                sale = shares_to_sell * current_prices[ticker] 
-                transaction_cost = sale * self.transaction_cost_percent   
-                self.balance += sale - transaction_cost    
-                self.shares_held[ticker] -= shares_to_sell    
-                self.total_shares_sold[ticker] += shares_to_sell     
-                self.total_sales_value[ticker] += sale   
+                # We want to sell a % of our held shares.
+                # Hint: Shares Held * abs(Action)
+                shares_to_sell = int(... * abs(...))
+                
+                # Gross Revene: The raw money generated from the sale
+                sale = ... * ...
+                
+                # Transaction Fee: The broker fee taken out of the sale proceeds
+                transaction_cost = ... * self.transaction_cost_percent
+                
+                # Update balance
+                self.balance += ... - ...
+                
+                # Update inventory and tracking metrics
+                self.shares_held[ticker] -= ...    
+                self.total_shares_sold[ticker] += ...     
+                self.total_sales_value[ticker] += ...  
 
         # Calculate the net worth 
         self.net_worth = self.balance + sum(self.shares_held[ticker] * current_prices[ticker] for ticker in self.tickers) 
