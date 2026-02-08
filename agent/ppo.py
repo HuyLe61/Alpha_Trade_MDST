@@ -9,18 +9,12 @@ EPS = 1e-6
 
 class PPO:
     """
-    TODO: Implement PPO Algorithm
-    
     Pseudocode:
     1. Collect trajectories
     2. Compute advantages using GAE
     3. Update policy using clipped objective
     4. Update value function
     5. Train the model 
-    
-    Resources:
-    - https://arxiv.org/pdf/1707.06347.pdf (Algorithm 1, page 3)
-    - https://spinningup.openai.com/en/latest/algorithms/ppo.html
     """
     
     def __init__(self, env, lr=3e-4, gamma=0.99, gae_lambda=0.95, clip_range=0.2,
@@ -38,25 +32,9 @@ class PPO:
     
     def compute_gae(self, rewards, values, dones):
         """
-        Compute Generalized Advantage Estimation (GAE).
-        
         GAE Formula: A_t = δ_t + (γλ)δ_{t+1} + (γλ)^2 δ_{t+2} + ...
         where δ_t = r_t + γV(s_{t+1}) - V(s_t) is the TD error
-        
-        Args:
-            rewards: List of rewards [r_0, r_1, ..., r_T]
-            values: List of value estimates [V(s_0), V(s_1), ..., V(s_T)]
-            dones: List of done flags [done_0, done_1, ..., done_T]
-        
-        Returns:
-            advantages: Normalized advantage estimates
-            returns: TD(λ) returns for value function training
-        
-        Resources:
-        - GAE Paper: https://arxiv.org/abs/1506.02438
-        - Explanation: https://spinningup.openai.com/en/latest/algorithms/ppo.html#gae
         """
-        # TODO: Implement the GAE algorithm
 
         advantages = []
         gae = 0
@@ -74,35 +52,12 @@ class PPO:
         values_arr = np.array(values[:-1], dtype=np.float32)
         returns = advantages + values_arr  # R_t = A_t + V(s_t)
 
-        # Normalize advantages AFTER computing returns
+        # Normalize advantages 
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         return advantages, returns 
     
     def collect_trajectories(self, n_steps):
-        """
-        Collect trajectories by interacting with the environment.
-        
-        This is the data collection phase where the agent:
-        1. Takes actions using current policy
-        2. Observes rewards and next states
-        3. Stores all information for later training
-        
-        Args:
-            n_steps: Number of environment steps to collect
-        
-        Returns:
-            Dictionary containing:
-                - states: np.array of shape (n_steps, obs_dim)
-                - actions: np.array of shape (n_steps, action_dim)
-                - log_probs: np.array of shape (n_steps,)
-                - rewards: list of length n_steps
-                - values: list of length n_steps+1 (includes terminal value)
-                - dones: list of length n_steps
-        
-        """
-        # TODO: Implement trajectory collection
-        # 
         # 1: Initialize storage lists
         states, actions, log_probs, rewards, values, dones = [], [], [], [], [], []
         # 2: Reset environment and get initial state
@@ -115,7 +70,6 @@ class PPO:
             with torch.no_grad(): 
                 action, log_prob, value = self.policy.get_action_and_log_prob_and_value(state_tensor) 
                 action = action.cpu().numpy()[0]
-                # FIX: log_prob is now scalar (summed in actor_critic), use .item()
                 log_prob = log_prob.cpu().item()
                 value = value.cpu().numpy()[0, 0]
             
@@ -151,25 +105,10 @@ class PPO:
 
 
     def update_policy(self, states, actions, old_log_probs, advantages, returns):
-        """
-        Update policy using PPO's clipped surrogate objective.
-        
+        """  
         PPO Objective: L^{CLIP}(θ) = E[min(r(θ)A, clip(r(θ), 1-ε, 1+ε)A)]
         where r(θ) = π_θ(a|s) / π_θ_old(a|s) is the probability ratio
-        
-        This prevents too large policy updates by clipping the ratio.
-        
-        Args:
-            states: np.array of states
-            actions: np.array of actions taken
-            old_log_probs: np.array of old log probabilities
-            advantages: np.array of advantage estimates
-            returns: np.array of TD(λ) returns
-        
-        Returns:
-            Dictionary with training statistics (losses, etc.)
         """
-        # TODO: Implement PPO policy update
         # Convert data to tensors 
         states = torch.FloatTensor(states)
         actions = torch.FloatTensor(actions)
@@ -227,15 +166,6 @@ class PPO:
         }
     
     def train(self, n_iterations, steps_per_iter=2048):
-        """
-        Main PPO training loop.
-        
-        The training loop follows this pattern:
-        1. Collect trajectories (rollout phase)
-        2. Compute advantages using GAE
-        3. Update policy multiple times on collected data
-        4. Repeat
-        """
         # 1: Initialize tracking lists
         training_stats = {
             'iterations': [],
