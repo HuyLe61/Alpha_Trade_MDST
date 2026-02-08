@@ -2,6 +2,6 @@ __pycache__/
 *.pyc
 data/
 models/
-backtest/.env
+backtest/
 .ipynb_checkpoints/
 .DS_Store
