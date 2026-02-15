@@ -5,3 +5,4 @@ models/
 backtest/
 .ipynb_checkpoints/
 .DS_Store
+env/
