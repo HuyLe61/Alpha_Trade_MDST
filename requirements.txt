@@ -2,3 +2,5 @@ numpy
 pandas
 yfinance
 matplotlib
+torch
+gymnasium
