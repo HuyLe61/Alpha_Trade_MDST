@@ -105,6 +105,14 @@ class AlpacaPPOTrader:
         self.policy.load_state_dict(checkpoint['policy_state_dict'])
         self.policy.eval()
 
+        self.feat_mean = checkpoint.get('feat_mean')
+        self.feat_std = checkpoint.get('feat_std')
+        if self.feat_mean is None or self.feat_std is None:
+            raise RuntimeError(
+                "Checkpoint missing feat_mean/feat_std. "
+                "Re-run the training save cell to include z-score stats."
+            )
+
         print(f"Policy loaded (obs={obs_dim}, act={act_dim})\n")
 
     def predict(self, observation: np.ndarray) -> np.ndarray:
@@ -202,17 +210,36 @@ class AlpacaPPOTrader:
             print("Data fetch failed. Skipping trade")
             return True
 
-        # Get current positions and cash for observation and order sizing
+        # Cancel any open orders from the previous cycle before placing new
+        # ones. Pending orders reserve buying power; leaving them open across
+        # cycles drains buying power to $0 even if no trades actually fill.
+        try:
+            cancelled = self.api.cancel_all_orders()
+            if cancelled:
+                print(f"Cancelled {len(cancelled)} open order(s) from previous cycle")
+        except Exception as e:
+            print(f"  Warning: could not cancel open orders: {e}")
+
+        # Observation balance: buying_power / margin_multiplier undoes the 2x
+        # margin inflation so the model sees the same ~1x scale it trained on,
+        # while still correctly reading 0 when no buying power is available.
+        # Order sizing: raw buying_power (what Alpaca enforces).
         positions = get_current_positions(self.api)
-        cash = float(self.api.get_account().cash)
+        account = self.api.get_account()
+        cash = float(account.cash)
+        buying_power = float(account.buying_power)
+        margin_multiplier = float(account.multiplier)
         initial = self.initial_value or portfolio_value
         max_nw = self.peak_value or portfolio_value
 
+        print(f"Cash: ${cash:,.2f}  |  Buying power: ${buying_power:,.2f}")
+
         obs = build_observation(
-            stock_data, balance=cash, shares_held=positions,
+            stock_data, balance=buying_power / margin_multiplier, shares_held=positions,
             net_worth=portfolio_value, max_net_worth=max_nw,
             current_step=self.trade_step, max_steps=252,
             initial_balance=initial,
+            feat_mean=self.feat_mean, feat_std=self.feat_std,
         )
 
         # Policy outputs one action per ticker in [-1, 1]
@@ -220,7 +247,10 @@ class AlpacaPPOTrader:
 
         orders = place_orders_from_actions(
             self.api, action, TRAINING_TICKERS,
-            portfolio_value, positions,
+            positions,
+            buying_power=buying_power,
+            portfolio_value=portfolio_value,
+            max_position_size=RISK_PARAMS['max_position_size'],
             min_trade_value=RISK_PARAMS['min_trade_value'],
         )
         print(f"Placed {len(orders)} orders")

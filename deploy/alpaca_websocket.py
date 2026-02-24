@@ -29,13 +29,16 @@ Docs: https://alpaca.markets/sdks/python/api_reference/data/stock/live.html
 
 import threading
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
 
 from alpaca.data.enums import DataFeed
+from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.live.stock import StockDataStream
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from alpaca_utils import TRAINING_TICKERS
 
@@ -43,17 +46,25 @@ from alpaca_utils import TRAINING_TICKERS
 MAX_15MIN_BARS = 200
 
 
+def _strip_tz(ts) -> datetime:
+    """Return a tz-naive UTC datetime regardless of whether ts is tz-aware or not."""
+    if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
+        return ts.astimezone(timezone.utc).replace(tzinfo=None)
+    return ts
+
+
 def _bar_to_tuple(bar) -> tuple:
     """
     Convert one bar from Alpaca's format to (timestamp, open, high, low, close, volume).
-    The stream can send either a Bar objects or a raw dict (keys like 't', 'o', 'h').
+    The stream can send either Bar objects or a raw dict (keys like 't', 'o', 'h').
+    Timestamps are always stored tz-naive (UTC) so seeded and live bars stay consistent.
     """
     if hasattr(bar, "timestamp"):
-        ts = bar.timestamp
+        ts = _strip_tz(bar.timestamp)
         o, h, l, c = bar.open, bar.high, bar.low, bar.close
         v = getattr(bar, "volume", 0) or 0
     else:
-        ts = pd.Timestamp(bar["t"]).to_pydatetime()
+        ts = _strip_tz(pd.Timestamp(bar["t"]).to_pydatetime())
         o, h, l, c = float(bar["o"]), float(bar["h"]), float(bar["l"]), float(bar["c"])
         v = int(bar.get("v", 0))
     return (ts, o, h, l, c, v)
@@ -146,16 +157,69 @@ class IEXStream15MinFetcher:
         self._stream.subscribe_bars(self._on_bar, *TRAINING_TICKERS)
         self._stream.run()
 
+    def _seed_history(self):
+        """
+        Pre-populate _fifteen_min_bars from Alpaca IEX REST API so the bot
+        can trade immediately on startup without waiting for the WebSocket to
+        accumulate bars on its own.
+
+        Requests are made one ticker at a time with a 5-day start window.
+        Batch requests are not reliable on the free tier, so per-ticker 
+        requests are more reliable. A 5-day lookback guarantees 20+ bars.
+        """
+        print("Seeding bar history from Alpaca IEX...")
+        seeded = set()
+        try:
+            client = StockHistoricalDataClient(
+                api_key=self._api_key,
+                secret_key=self._secret_key,
+            )
+            start = datetime.now(timezone.utc) - timedelta(days=5)
+            for symbol in TRAINING_TICKERS:
+                try:
+                    request = StockBarsRequest(
+                        symbol_or_symbols=symbol,
+                        timeframe=TimeFrame(15, TimeFrameUnit.Minute),
+                        start=start,
+                        limit=MAX_15MIN_BARS,
+                        feed=DataFeed.IEX,
+                    )
+                    bars = client.get_stock_bars(request)
+                    symbol_bars = bars.data.get(symbol, [])
+                    if not symbol_bars:
+                        continue
+                    tuples = [_bar_to_tuple(bar) for bar in symbol_bars]
+                    with self._lock:
+                        self._fifteen_min_bars[symbol] = tuples[-MAX_15MIN_BARS:]
+                    seeded.add(symbol)
+                    print(f"    {symbol}: {len(tuples)} bars")
+                except Exception as e:
+                    print(f"    {symbol}: error — {e}")
+        except Exception as e:
+            print(f"Alpaca IEX client error: {e}")
+
+        if seeded == set(TRAINING_TICKERS):
+            self._ready.set()
+            min_bars = min(len(self._fifteen_min_bars[s]) for s in TRAINING_TICKERS)
+            print(f"All {len(TRAINING_TICKERS)} tickers seeded. Trading can start immediately.")
+        else:
+            still_missing = set(TRAINING_TICKERS) - seeded
+            print(f"Could not seed {len(still_missing)} tickers: {', '.join(still_missing)}. Waiting for WebSocket warm-up.")
+
     def start(self):
         """
-        Start the WebSocket in a background thread so the main program can
-        keep running. The thread is "daemon" so it won't prevent the process
-        from exiting when the main thread exits.
+        Seed bar history from REST API, then start the WebSocket in a
+        background thread so the main program can keep running.
+        The thread is "daemon" so it won't prevent the process from exiting
+        when the main thread exits.
         """
         if self._thread is not None and self._thread.is_alive():
             return
+        self._seed_history()
         self._thread = threading.Thread(target=self._run_stream, daemon=True)
         self._thread.start()
+        # If seed succeeded _ready is already set; otherwise wait up to 30s
+        # for the first live bar to arrive from the WebSocket.
         self._ready.wait(timeout=30)
 
     def stop(self):
@@ -188,7 +252,9 @@ class IEXStream15MinFetcher:
                     columns=["Date", "Open", "High", "Low", "Close", "Volume"],
                 )
                 df.set_index("Date", inplace=True)
-                df.index = pd.to_datetime(df.index)
+                # utc=True handles any residual tz-aware timestamps; then
+                # strip tz so the index is plain tz-naive datetime64.
+                df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
                 out[symbol] = df
             if len(out) < len(TRAINING_TICKERS):
                 return None
