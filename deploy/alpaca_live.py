@@ -245,6 +245,12 @@ class AlpacaPPOTrader:
         # Policy outputs one action per ticker in [-1, 1]
         action = self.predict(obs)
 
+        # Output model decisions
+        # buys = [(t, f"{a:+.3f}") for t, a in zip(TRAINING_TICKERS, action) if a > 0]
+        # sells = [(t, f"{a:+.3f}") for t, a in zip(TRAINING_TICKERS, action) if a < 0]
+        # holds = [t for t, a in zip(TRAINING_TICKERS, action) if a == 0]
+        # print(f"Actions → Buy: {buys} \nSell: {sells}  \nHold: {len(holds)}")
+
         orders = place_orders_from_actions(
             self.api, action, TRAINING_TICKERS,
             positions,

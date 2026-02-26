@@ -148,10 +148,16 @@ def place_orders_from_actions(api, actions: np.ndarray, tickers: List[str],
 
         try:
             quote = api.get_latest_quote(ticker, feed='iex')
-            ask = float(quote.ask_price)
-            bid = float(quote.bid_price)
-            mid = (ask + bid) / 2
-            price = mid if mid > 0 else ask
+            ask = float(quote.ask_price or 0)
+            bid = float(quote.bid_price or 0)
+            if ask <= 0 and bid <= 0:
+                print(f"  No valid quote for {ticker}, skipping")
+                continue
+            if ask <= 0:
+                ask = bid
+            if bid <= 0:
+                bid = ask
+            price = (ask + bid) / 2
         except Exception as e:
             print(f"  Could not get quote for {ticker}: {e}")
             continue
