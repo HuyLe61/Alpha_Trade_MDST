@@ -27,6 +27,11 @@ TRAINING_TICKERS = [
     'HD', 'DIS', 'BAC', 'XOM', 'CVX'
 ]
 
+# Bollinger Bands and RVOL each use a 20-period rolling window — the largest
+# lookback in add_technical_indicators. After the dropna() that function calls,
+# any DataFrame with fewer than 20 rows will be completely empty.
+MIN_BARS_FOR_INDICATORS = 20
+
 
 def prepare_features(stock_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
@@ -35,10 +40,19 @@ def prepare_features(stock_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFr
     The policy was trained on data that included these features, so we must
     compute them here from the same formulas (see src/data_loader.add_technical_indicators).
     """
-    processed = {}
     for ticker in TRAINING_TICKERS:
         if ticker not in stock_data:
             raise ValueError(f"Missing training ticker: {ticker}")
+        n = len(stock_data[ticker])
+        if n < MIN_BARS_FOR_INDICATORS:
+            print(
+                f"  Indicator warm-up: {ticker} has {n}/{MIN_BARS_FOR_INDICATORS} bars. "
+                f"Waiting for more 15-min bars..."
+            )
+            return None
+
+    processed = {}
+    for ticker in TRAINING_TICKERS:
         processed[ticker] = add_technical_indicators(stock_data[ticker])
     return processed
 
@@ -47,7 +61,9 @@ def build_observation(stock_data: Dict[str, pd.DataFrame],
                       balance: float, shares_held: Dict[str, int],
                       net_worth: float, max_net_worth: float,
                       current_step: int, max_steps: int,
-                      initial_balance: float = 100000) -> np.ndarray:
+                      initial_balance: float = 100000,
+                      feat_mean: np.ndarray = None,
+                      feat_std: np.ndarray = None) -> np.ndarray:
     """
     Build the observation vector that the PPO policy expects.
 
@@ -59,16 +75,20 @@ def build_observation(stock_data: Dict[str, pd.DataFrame],
     """
     obs = []
 
-    # Latest feature row per ticker (same order as TRAINING_TICKERS)
     for ticker in TRAINING_TICKERS:
         df = stock_data[ticker]
-        row = df.iloc[-1]  # Latest row
+        row = df.iloc[-1]
         values = row.values.astype(np.float32)
         values = np.nan_to_num(values, nan=0.0, posinf=1e6, neginf=-1e6)
+        if feat_mean is not None and feat_std is not None:
+            values = (values - feat_mean) / feat_std
         obs.extend(values)
 
-    # Balance (normalized)
-    obs.append(np.clip(balance / initial_balance, -10.0, 10.0))
+    # The training env (naive_env._next_observation) placed balance at
+    # frame[-4 - n_tickers] = frame[239], which lands inside the stock
+    # features block and overwrites the last ticker's last feature.
+    # Replicate that layout exactly so obs dim == 263 (what the model expects).
+    obs[239] = np.clip(balance / initial_balance, -10.0, 10.0)
 
     # Shares held (normalized)
     for ticker in TRAINING_TICKERS:
@@ -105,43 +125,64 @@ def get_current_positions(api) -> Dict[str, int]:
 
 
 def place_orders_from_actions(api, actions: np.ndarray, tickers: List[str],
-                              portfolio_value: float, current_positions: Dict[str, int],
+                              current_positions: Dict[str, int],
+                              buying_power: float,
+                              portfolio_value: float,
+                              max_position_size: float = 1.0,
                               min_trade_value: float = 100) -> List[Dict]:
     """
-    Turn policy actions into orders via the Alpaca REST API.
+    Turn policy actions into Alpaca orders, mirroring naive_env's step() logic.
 
-    Matches naive_env: each action is a fraction of the per-ticker budget.
-    budget_per_ticker = portfolio_value / n_tickers. 
-    For each ticker, we need to treat each ticker equally in terms of
-    the amount of money that can be spent on it 
-    If action > 0 we BUY shares worth (budget_per_ticker * action) 
-    If action < 0 we SELL shares worth (budget_per_ticker * |action|).
+    Buy  (action > 0): shares = int(remaining_buying_power * action / price).
+                       Capped so position doesn't exceed max_position_size of portfolio.
+    Sell (action < 0): shares = int(shares_held * |action|).
+                       Never short-sells; capped by what we actually own.
     """
     orders = []
-    n_tickers = len(tickers)
-    budget_per_ticker = portfolio_value / n_tickers
+
+    # Local balance tracker mirrors naive_env's self.balance: decrements per buy.
+    remaining_buying_power = buying_power
 
     for i, ticker in enumerate(tickers):
         action = float(actions[i])
 
         try:
-            quote = api.get_latest_trade(ticker, feed='iex')
-            price = quote.price
+            quote = api.get_latest_quote(ticker, feed='iex')
+            ask = float(quote.ask_price or 0)
+            bid = float(quote.bid_price or 0)
+            if ask <= 0 and bid <= 0:
+                print(f"  No valid quote for {ticker}, skipping")
+                continue
+            if ask <= 0:
+                ask = bid
+            if bid <= 0:
+                bid = ask
+            price = (ask + bid) / 2
         except Exception as e:
-            print(f"  Could not get price for {ticker}: {e}")
+            print(f"  Could not get quote for {ticker}: {e}")
             continue
 
         if action > 0:
-            amount_to_spend = budget_per_ticker * action
-            shares_to_buy = int(amount_to_spend / price)
-            if shares_to_buy <= 0 or shares_to_buy * price < min_trade_value:
+            # Alpaca validates buy orders against the ask price
+            amount_to_spend = remaining_buying_power * action
+            shares_to_buy = int(amount_to_spend / ask)
+
+            # Enforce max position size: cap so total position stays within limit
+            current_shares = current_positions.get(ticker, 0)
+            current_value = current_shares * ask
+            max_value = portfolio_value * max_position_size
+            room = max(max_value - current_value, 0)
+            shares_to_buy = min(shares_to_buy, int(room / ask))
+
+            if shares_to_buy <= 0 or shares_to_buy * ask < min_trade_value:
                 continue
             try:
                 order = api.submit_order(
                     symbol=ticker, qty=shares_to_buy,
                     side='buy', type='market', time_in_force='day'
                 )
-                print(f"BUY {shares_to_buy:>4} {ticker} @ ${price:.2f}")
+                print(f"BUY {shares_to_buy:>4} {ticker} @ ~${ask:.2f}")
+                remaining_buying_power -= shares_to_buy * ask
                 orders.append({
                     'ticker': ticker, 
                     'side': 'buy',
@@ -152,9 +193,9 @@ def place_orders_from_actions(api, actions: np.ndarray, tickers: List[str],
             except Exception as e:
                 print(f"Error placing order for {ticker}: {e}")
         elif action < 0:
-            amount_to_sell_value = budget_per_ticker * abs(action)
-            # Limit max -20 shares for each sell
-            shares_to_sell = min(int(amount_to_sell_value / price), 20)
+            shares_owned = current_positions.get(ticker, 0)
+            # Mirror training: sell a fraction of shares held, never short-sell
+            shares_to_sell = min(int(shares_owned * abs(action)), shares_owned)
             if shares_to_sell <= 0 or shares_to_sell * price < min_trade_value:
                 continue
             try:
@@ -163,6 +204,13 @@ def place_orders_from_actions(api, actions: np.ndarray, tickers: List[str],
                     side='sell', type='market', time_in_force='day'
                 )
                 print(f"SELL {shares_to_sell:>4} {ticker} @ ${price:.2f}")
+                # Note: unlike training (where self.balance += sale immediately),
+                # we do NOT add sell proceeds to remaining_buying_power here.
+                # Per Alpaca docs: "sell long orders do not replenish your
+                # available buying power until they are executed [filled]."
+                # In a rapid-fire loop, sells may not fill before the next buy
+                # is validated, so the proceeds aren't available yet.
+                # https://docs.alpaca.markets/docs/orders-at-alpaca
                 orders.append({
                     'ticker': ticker, 
                     'side': 'sell',
