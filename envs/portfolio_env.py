@@ -32,7 +32,7 @@ class PortfolioEnv(AlphaPortfolio, gym.Env):
         - Time step (normalized)
     
     Reward:
-        Configurable: 'sharpe', 'sortino', 'return', 'utility'
+        Sharpe ratio (non-annualized) — maximise risk-adjusted return.
     """
     
     metadata = {"render_modes": ["human"]}
@@ -44,7 +44,6 @@ class PortfolioEnv(AlphaPortfolio, gym.Env):
         transaction_cost_pct: float = 0.001,
         include_cash: bool = True,
         risk_free_rate: float = 0.0,
-        reward_type: str = "sharpe",
         cov_window: int = 20,
     ):
         """
@@ -54,7 +53,6 @@ class PortfolioEnv(AlphaPortfolio, gym.Env):
             transaction_cost_pct: Transaction cost percentage
             include_cash: Whether to include cash as an asset
             risk_free_rate: Annual risk-free rate
-            reward_type: 'sharpe', 'sortino', 'return', or 'utility'
             cov_window: Window for rolling statistics
         """
         # Store data
@@ -72,9 +70,6 @@ class PortfolioEnv(AlphaPortfolio, gym.Env):
             risk_free_rate=risk_free_rate,
         )
         self._cov_window = cov_window
-        
-        # Environment config
-        self.reward_type = reward_type
         
         # Calculate dimensions
         sample_df = next(iter(stock_data.values()))
@@ -122,8 +117,8 @@ class PortfolioEnv(AlphaPortfolio, gym.Env):
         for i, ticker in enumerate(self.tickers):
             self.price_matrix[:, i] = self.stock_data[ticker]['Close'].values[:min_len]
         
-        # Returns matrix
-        self.returns_matrix = np.diff(np.log(self.price_matrix + 1e-8), axis=0)
+        # Simple returns: r_t = P_t / P_{t-1} - 1
+        self.returns_matrix = self.price_matrix[1:] / (self.price_matrix[:-1] + 1e-8) - 1.0
         self.returns_matrix = np.nan_to_num(self.returns_matrix, nan=0.0)
     
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
@@ -213,24 +208,10 @@ class PortfolioEnv(AlphaPortfolio, gym.Env):
         return obs.astype(np.float32)
     
     def _compute_reward(self) -> float:
-        """Compute reward based on reward_type."""
+        """Reward = non-annualized Sharpe ratio, clipped to [-10, 10]."""
         if len(self._returns_history) < 2:
             return 0.0
-        
-        if self.reward_type == "sharpe":
-            reward = self.sharpe_ratio(annualize=False)
-        elif self.reward_type == "sortino":
-            reward = self.sortino_ratio()
-        elif self.reward_type == "return":
-            reward = self._returns_history[-1] * 100
-        elif self.reward_type == "utility":
-            mean = self.mean_return()
-            var = self.std_return() ** 2
-            reward = (mean - 0.5 * var) * 100
-        else:
-            reward = self._returns_history[-1] * 100
-        
-        return float(np.clip(reward, -10.0, 10.0))
+        return float(np.clip(self.sharpe_ratio(annualize=False), -10.0, 10.0))
     
     def _get_info(self) -> dict:
         """Get info dict."""

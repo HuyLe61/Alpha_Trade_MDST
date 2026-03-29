@@ -208,33 +208,6 @@ class AlphaPortfolio:
         rf = self.risk_free_rate if annualize else self.risk_free_rate / 252
         return (mean - rf) / std
     
-    def sortino_ratio(self, target: float = 0.0) -> float:
-        """
-        Sortino ratio (penalizes only downside volatility).
-        
-        Args:
-            target: Minimum acceptable return
-        
-        Returns:
-            Sortino ratio
-        """
-        if len(self._returns_history) < 2:
-            return 0.0
-        
-        returns = np.array(self._returns_history)
-        excess = returns - target
-        downside = excess[excess < 0]
-        
-        if len(downside) == 0:
-            return np.mean(excess) * 100  # All positive
-        
-        downside_std = np.sqrt(np.mean(downside ** 2))
-        
-        if downside_std < 1e-8:
-            return 0.0
-        
-        return np.mean(excess) / downside_std
-    
     def max_drawdown(self) -> float:
         """
         Maximum drawdown (percentage).
@@ -251,38 +224,6 @@ class AlphaPortfolio:
         
         return float(np.max(drawdown))
     
-    def calmar_ratio(self) -> float:
-        """Calmar ratio (annual return / max drawdown)."""
-        mdd = self.max_drawdown()
-        if mdd < 1e-8:
-            return 0.0
-        
-        ann_return = self.mean_return(annualize=True)
-        return ann_return / mdd
-    
-    def information_ratio(self, benchmark_returns: np.ndarray) -> float:
-        """
-        Information ratio vs benchmark.
-        
-        Args:
-            benchmark_returns: Benchmark returns array
-        
-        Returns:
-            Information ratio
-        """
-        if len(self._returns_history) == 0:
-            return 0.0
-        
-        port_returns = np.array(self._returns_history)
-        min_len = min(len(port_returns), len(benchmark_returns))
-        
-        excess = port_returns[:min_len] - benchmark_returns[:min_len]
-        
-        if np.std(excess) < 1e-8:
-            return 0.0
-        
-        return np.mean(excess) / np.std(excess)
-    
     def get_metrics(self) -> dict:
         """Get all performance metrics as a dictionary."""
         return {
@@ -290,9 +231,7 @@ class AlphaPortfolio:
             "mean_return": self.mean_return(annualize=True),
             "std_return": self.std_return(annualize=True),
             "sharpe_ratio": self.sharpe_ratio(),
-            "sortino_ratio": self.sortino_ratio(),
             "max_drawdown": self.max_drawdown() * 100,
-            "calmar_ratio": self.calmar_ratio(),
             "final_value": self._value,
         }
     
