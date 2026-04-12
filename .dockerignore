@@ -1,0 +1,17 @@
+.git
+__pycache__
+*.pyc
+data/
+models/
+backtest/
+.ipynb_checkpoints
+.DS_Store
+deploy/.env
+webapp/backend/stocks.db
+webapp/backend/__pycache__
+webapp/frontend/node_modules
+webapp/frontend/dist
+*.ipynb
+.cursor
+.gitignore
+README.md

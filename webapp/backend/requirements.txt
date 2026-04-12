@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+websockets
+stable-baselines3
+yfinance
+pandas
+numpy
+torch
+gymnasium
