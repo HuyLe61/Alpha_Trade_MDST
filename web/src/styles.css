@@ -220,21 +220,32 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 .stack dd { text-align: left; }
 .specs--tight { grid-template-columns: 1fr; }
 
-/* Column fix */
-.fix { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.fix .panel__lede { margin: 16px 0 0; }
-.fix .table td:first-child { white-space: normal; padding-left: 0; }
-.fix .table th:first-child { padding-left: 0; }
-.fix .table th.r, .fix .table td.r { padding-inline: 8px 0; }
-.fix__note strong { color: var(--ink); font-weight: 500; }
-.colmap { border-collapse: separate; border-spacing: 4px; width: 100%; font-size: 13.5px; }
-.colmap thead th { font-size: 11px; font-weight: 500; color: var(--muted); text-align: center; }
-.colmap tbody th { font-size: 13px; font-weight: 400; color: var(--muted); text-align: left; padding-right: 8px; white-space: nowrap; }
-.colmap__cell { text-align: center; padding: 7px 4px; border-radius: 6px; background: var(--cell-empty); box-shadow: 0 0 0 1px var(--rule); }
-.colmap__cell--bad { color: var(--sell); background: color-mix(in oklab, var(--sell) 14%, transparent); box-shadow: 0 0 0 1px var(--sell); font-weight: 500; }
-.colmap__cell--ok { color: var(--buy); background: color-mix(in oklab, var(--buy) 10%, transparent); box-shadow: 0 0 0 1px color-mix(in oklab, var(--buy) 45%, transparent); }
+/* Two agents */
+.models { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.model { display: flex; flex-direction: column; gap: 10px; }
+.model__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.model h3 { font: 700 20px/1.2 var(--font-display); letter-spacing: -0.01em; }
+.model p { margin: 0; font-size: 15px; }
+.model p.dim { flex: 1; }
+.badge { font: 500 11.5px/1 var(--font-mono); color: var(--buy); background: color-mix(in oklab, var(--buy) 12%, transparent); padding: 5px 8px; border-radius: 999px; }
+.model__stats { margin: 6px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.model__stats > div { padding-top: 12px; }
+.model__stats dt { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.model__stats dd { margin: 0; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; }
+.backtest { margin-top: 16px; }
+.backtest .panel__lede { margin: -6px 0 14px; }
+.backtest .backtest__note { margin: 14px 0 0; font-size: 13px; }
+.backtest .table td:first-child { white-space: normal; }
+.bar { position: relative; display: flex; align-items: center; min-width: 150px; height: 24px; }
+.bar__fill { position: absolute; inset: 3px auto 3px 0; border-radius: 3px; }
+.bar__fill--agent { background: color-mix(in oklab, var(--buy) 28%, transparent); }
+.bar__fill--base { background: var(--cell-neutral); }
+.bar .mono { position: relative; padding-left: 8px; font-size: 13.5px; }
 
-.caveats ul { margin: 0; padding-left: 20px; max-width: 72ch; color: var(--muted); display: grid; gap: 8px; }
+.stack--wide { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; }
+
+.takeaways { margin: 0; padding-left: 22px; max-width: 76ch; display: grid; gap: 12px; color: var(--muted); }
+.takeaways strong { color: var(--ink); font-weight: 600; }
 
 /* Dashboard */
 .dash { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding-top: 16px; }
@@ -282,7 +293,7 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
   .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 900px) {
-  .hero, .split, .dash, .fix { grid-template-columns: minmax(0, 1fr); }
+  .hero, .split, .dash, .models { grid-template-columns: minmax(0, 1fr); }
   .arch { grid-template-columns: 1fr; }
   .arch > * { grid-column: 1 !important; grid-row: auto !important; }
   .arch__edge { transform: none; }
@@ -298,9 +309,13 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
   .pipeline { grid-template-columns: 1fr; }
   .nav a { padding: 6px 7px; }
   .readout dd { font-size: 17px; }
-  .colmap { border-spacing: 3px; font-size: 11.5px; }
-  .colmap tbody th { white-space: normal; font-size: 12px; padding-right: 4px; }
-  .colmap__cell { padding: 6px 2px; }
+  .stack--wide { grid-template-columns: 1fr; }
+  .model__stats dd { font-size: 17px; }
+  .bar { min-width: 76px; }
+  .backtest .table th { white-space: normal; }
+  .backtest .table th, .backtest .table td { padding-inline: 4px; }
+  .backtest .table { font-size: 13px; }
+  .bar .mono { font-size: 12.5px; padding-left: 6px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

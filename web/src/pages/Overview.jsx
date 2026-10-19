@@ -1,5 +1,5 @@
-// The project README as a page: what the agent is, how one decision is made,
-// how the system runs, and what the numbers do and don't mean.
+// The project as a page: the two agents and their results, the live record,
+// how the system runs, the tools behind it, and what we learned.
 import { Link } from 'react-router-dom'
 import EquityChart from '../components/EquityChart.jsx'
 import { DecisionGrid, ScaleLegend } from '../components/Decisions.jsx'
@@ -12,40 +12,52 @@ const PIPELINE = [
   ['Pull market data', 'Seven days of finished 15-minute IEX bars for each of the 20 tickers, over Alpaca’s REST API.'],
   ['Compute indicators', 'RSI-14, Bollinger bands, EMA-12/26, MACD and relative volume. These are the same formulas used in training.'],
   ['Build the observation', '263 numbers: 12 z-scored features × 20 tickers, plus shares held, net worth, peak net worth and the step count.'],
-  ['Run the policy', 'The PPO actor network (263 → 256 → 20, tanh output) returns one value per ticker in [−1, 1].'],
+  ['Run the policy', 'The trained agent returns one value per ticker, from −1 (sell everything) to +1 (buy with all buying power).'],
   ['Size and send orders', 'Buy with a fraction of buying power, capped at 15% of the portfolio per stock. Sell a fraction of the shares held, never short. Ignore anything under $100.'],
   ['Record everything', 'The decision, the orders, fills, positions and equity are written to Supabase, and this site picks them up in real time.'],
 ]
 
 const STACK = [
   ['Agent', 'PyTorch PPO written from scratch: actor-critic, GAE, clipped surrogate objective'],
-  ['Environment', 'Custom Gymnasium trading environment, PnL reward, 0.5% transaction cost'],
-  ['Data', 'yfinance daily bars for training, Alpaca IEX 15-minute bars live'],
+  ['Environments', 'Two custom Gymnasium environments: one trades shares for a return reward, one sets portfolio weights for a Sharpe reward'],
+  ['Data', 'Yahoo Finance daily bars for training, Alpaca IEX 15-minute bars live'],
   ['Broker', 'Alpaca paper trading API (alpaca-py)'],
   ['Scheduler', 'GitHub Actions cron, one run every 15 minutes'],
   ['Database', 'Supabase Postgres with row-level security and Realtime'],
   ['Site', 'React, Vite and Recharts, hosted on Vercel'],
 ]
 
-const HYPERPARAMS = [
-  ['Learning rate', '3e-4'], ['Discount γ', '0.99'], ['GAE λ', '0.95'], ['Clip ε', '0.2'],
-  ['Epochs / update', '10'], ['Minibatch', '64'], ['Entropy coef.', '0.01'], ['Value coef.', '0.5'],
-  ['Steps / iteration', '2,048'], ['Iterations', '200'],
+// Held-out test, 2021-01-04 to 2024-12-31, $100k start. Sharpe is annualized from daily returns.
+const MODELS = [
+  {
+    name: 'Return reward',
+    live: true,
+    how: 'Each step it decides how much of each stock to buy or sell. It is rewarded for the change in portfolio value, so it chases gains and ignores how bumpy the ride is.',
+    habit: 'It concentrates its bets: by the end of 2020 it held 86% of its money in NVDA.',
+    stats: [['Return', '+103.0%'], ['Sharpe', '0.83'], ['Max drawdown', '32.4%']],
+  },
+  {
+    name: 'Sharpe reward',
+    how: 'Each step it sets portfolio weights across the 20 stocks and cash. It is rewarded with the running Sharpe ratio, return divided by volatility, so big swings cost it. It also sees how the stocks move together, the same covariance a minimum-variance portfolio is built from, which pulls it toward low-variance mixes.',
+    habit: 'It stays spread out: it never put more than 12% in one stock and leaned toward steadier names like JNJ and BAC.',
+    stats: [['Return', '+96.2%'], ['Sharpe', '1.07'], ['Max drawdown', '29.7%']],
+  },
 ]
 
-// The yfinance CSVs store columns as Close, High, Low, Open, Volume. Training used to
-// relabel them by position, which swapped Open and Close.
-const COLUMN_ROWS = [
-  ['Stored in the file', ['Close', 'High', 'Low', 'Open', 'Volume'], null],
-  ['Read as, before the fix', ['Open', 'High', 'Low', 'Close', 'Volume'], 'wrong'],
-  ['Read as, now', ['Close', 'High', 'Low', 'Open', 'Volume'], 'right'],
+const BACKTEST = [
+  ['Return-reward agent', 103.0, '0.83', '32.4%', 'agent'],
+  ['Sharpe-reward agent', 96.2, '1.07', '29.7%', 'agent'],
+  ['Equal weight, buy and hold', 108.2, '1.12', '25.9%', 'base'],
+  ['Minimum variance, rebalanced monthly', 55.9, '0.77', '23.6%', 'base'],
 ]
-const STORED = COLUMN_ROWS[0][1]
+const BEST_RETURN = Math.max(...BACKTEST.map((r) => r[1]))
 
-const VALIDATION_RUNS = [
-  ['Figure previously shown on this page', '+39.6%', '1.00', '34.3%'],
-  ['Model live before the fix', '+57.0%', '1.32', '31.1%'],
-  ['Model live now', '+110.0%', '1.64', '37.0%'],
+const TAKEAWAYS = [
+  ['Holding everything beat both agents.', 'Owning all 20 stocks in equal amounts returned +108% from 2021 to 2024, with the best Sharpe (1.12) and a smaller drawdown than either agent.'],
+  ['The reward sets the personality.', 'Rewarding raw returns produced a concentrated, high-swing trader. Rewarding the Sharpe ratio produced a diversified one with a better Sharpe (1.07 vs 0.83) and a smaller drawdown, for about 7 points less return.'],
+  ['Lower risk has a price.', 'The minimum-variance portfolio had the smallest drawdown (23.6%) but returned about half as much as equal weight.'],
+  ['One backtest proves little.', 'Retraining the return-reward agent with different random seeds moved its 2020 result anywhere from +31% to +110%.'],
+  ['Live is not the backtest.', 'The live agent learned from daily bars but trades 15-minute bars, so its paper results may not match the test period. It trades paper money, and none of this is investment advice.'],
 ]
 
 export default function Overview({ data }) {
@@ -55,8 +67,9 @@ export default function Overview({ data }) {
         <div className="hero__text">
           <h1>A reinforcement-learning agent trading 20 stocks every 15 minutes.</h1>
           <p className="lede">
-            Alpha Trade is a PPO policy trained on ten years of S&amp;P 500 prices. It now runs on its own against a
-            $100k Alpaca paper account. Each tile on the right is one of its outputs from the last decision.
+            Alpha Trade trains reinforcement-learning agents with PPO on daily prices for 20 large S&amp;P 500 stocks
+            and compares two reward designs. The return-reward agent now trades a $100k Alpaca paper account on its
+            own. Each tile on the right is one of its outputs from the last decision.
           </p>
           <div className="hero__actions">
             <Link className="button" to="/dashboard">Open the live dashboard</Link>
@@ -66,6 +79,64 @@ export default function Overview({ data }) {
         <div className="hero__grid">
           {data ? <DecisionGrid cycle={data.cycles.find((c) => c.actions)} /> : <div className="skeleton" style={{ height: 320 }} />}
           <ScaleLegend />
+        </div>
+      </section>
+
+      <section className="section">
+        <header className="section__head">
+          <h2>Two agents, two rewards</h2>
+          <p>
+            Both agents use the same PPO algorithm and the same daily prices for the 20 stocks. They learned on 2014 to
+            2019, were checked on 2020, and were tested on 2021 to 2024, which neither saw during training. The only real
+            difference is what they are rewarded for.
+          </p>
+        </header>
+        <div className="models">
+          {MODELS.map((m) => (
+            <article key={m.name} className="panel model">
+              <div className="model__head">
+                <h3>{m.name}</h3>
+                {m.live && <span className="badge">Trading the paper account</span>}
+              </div>
+              <p>{m.how}</p>
+              <p className="dim">{m.habit}</p>
+              <dl className="model__stats">
+                {m.stats.map(([k, v]) => (
+                  <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>
+                ))}
+              </dl>
+            </article>
+          ))}
+        </div>
+        <div className="panel backtest">
+          <h2>Test period, January 2021 to December 2024</h2>
+          <p className="panel__lede dim">Each strategy starts with $100k. The agents are compared with two classic portfolios.</p>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr><th>Strategy</th><th>Return</th><th className="r">Sharpe</th><th className="r">Max drawdown</th></tr>
+              </thead>
+              <tbody>
+                {BACKTEST.map(([name, ret, sharpe, dd, kind]) => (
+                  <tr key={name}>
+                    <td className={kind === 'agent' ? 'strong' : 'dim'}>{name}</td>
+                    <td>
+                      <span className="bar">
+                        <span className={`bar__fill bar__fill--${kind}`} style={{ width: `${(ret / BEST_RETURN) * 100}%` }} />
+                        <span className="mono">+{ret.toFixed(1)}%</span>
+                      </span>
+                    </td>
+                    <td className="mono r">{sharpe}</td>
+                    <td className="mono r">{dd}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="panel__lede dim backtest__note">
+            Sharpe is annualized from daily returns. The return-reward environment charges 0.5% per trade and the
+            Sharpe-reward one 0.1%.
+          </p>
         </div>
       </section>
 
@@ -86,8 +157,8 @@ export default function Overview({ data }) {
 
       <section className="section">
         <header className="section__head">
-          <h2>How one decision is made</h2>
-          <p>These steps run in order every 15 minutes while the market is open.</p>
+          <h2>Workflow</h2>
+          <p>Every 15 minutes while the market is open, the live agent runs these steps in order.</p>
         </header>
         <ol className="pipeline">
           {PIPELINE.map(([title, body]) => (
@@ -117,119 +188,27 @@ export default function Overview({ data }) {
         </div>
       </section>
 
-      <section className="section split">
-        <div>
-          <header className="section__head">
-            <h2>Model</h2>
-            <p>
-              Trained on daily bars from 2014 to 2019 and tuned on 2020. On that 2020 validation year it returned{' '}
-              <strong className="mono">+110.0%</strong> with a Sharpe ratio of <strong className="mono">1.64</strong> and a{' '}
-              <strong className="mono">37.0%</strong> max drawdown.
-            </p>
-          </header>
-          <dl className="specs">
-            {HYPERPARAMS.map(([k, v]) => (
-              <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>
-            ))}
-          </dl>
-        </div>
-        <div>
-          <header className="section__head">
-            <h2>Tools</h2>
-            <p>The libraries and services behind each layer.</p>
-          </header>
-          <dl className="stack">
-            {STACK.map(([k, v]) => (
-              <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
-            ))}
-          </dl>
-        </div>
+      <section className="section">
+        <header className="section__head">
+          <h2>Tools</h2>
+          <p>The libraries and services behind each layer.</p>
+        </header>
+        <dl className="stack stack--wide">
+          {STACK.map(([k, v]) => (
+            <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+          ))}
+        </dl>
       </section>
 
       <section className="section">
         <header className="section__head">
-          <h2>The column mix-up we fixed</h2>
-          <p>
-            The price files from yfinance list their columns as Close, High, Low, Open, Volume. Training renamed them by
-            position as Open, High, Low, Close, Volume, so the model learned with the open and close prices swapped. RSI,
-            Bollinger bands, the EMAs and MACD all read the close column, so they were built from opening prices too.
-            Live bars from Alpaca arrive in the right order, which meant the trader fed the model data that didn’t match
-            its training.
-          </p>
+          <h2>Takeaways</h2>
         </header>
-        <div className="fix">
-          <div className="panel">
-            <h2>Column by column</h2>
-            <div className="table-wrap">
-              <table className="colmap">
-                <thead>
-                  <tr>
-                    <td />
-                    {STORED.map((_, i) => <th key={i} scope="col" className="mono">{i + 1}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {COLUMN_ROWS.map(([label, cols, kind]) => (
-                    <tr key={label}>
-                      <th scope="row">{label}</th>
-                      {cols.map((c, i) => {
-                        const state = !kind ? '' : c === STORED[i] ? (kind === 'right' ? ' colmap__cell--ok' : '') : ' colmap__cell--bad'
-                        return <td key={i} className={`mono colmap__cell${state}`}>{c}</td>
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="panel__lede dim">
-              The data loading now reads the header row and picks each column by name, so its position in the file no
-              longer matters.
-            </p>
-          </div>
-          <div className="panel">
-            <h2>2020 validation year</h2>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr><th>Model</th><th className="r">Return</th><th className="r">Sharpe</th><th className="r">Max drawdown</th></tr>
-                </thead>
-                <tbody>
-                  {VALIDATION_RUNS.map(([label, ret, sharpe, dd], i) => (
-                    <tr key={label} className={i === VALIDATION_RUNS.length - 1 ? 'strong' : ''}>
-                      <td>{label}</td>
-                      <td className="mono r">{ret}</td>
-                      <td className="mono r">{sharpe}</td>
-                      <td className="mono r">{dd}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="panel__lede dim fix__note">
-              Don’t read the jump as the fix making the model better. Three more training runs on the corrected data,
-              with different random seeds, returned <strong className="mono">+31.4%</strong> to{' '}
-              <strong className="mono">+32.2%</strong> (Sharpe 0.83 to 0.92). The live model ended 2020 with 86% of its
-              money in NVDA, which is most of its lead. The real gain is that it now trains on the same kind of data it
-              trades on.
-            </p>
-            <p className="panel__lede dim">
-              The old +39.6% came from a training run that was never saved. The model that was actually live scored +57.0%.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section className="section caveats">
-        <header className="section__head">
-          <h2>Before you read the numbers</h2>
-        </header>
-        <ul>
-          <li>This is paper money. Alpaca simulates the fills, and there is no slippage beyond the quoted spread.</li>
-          <li>The policy was trained on daily bars but trades on 15-minute bars. Its features are z-scored with the daily training statistics.</li>
-          <li>Prices come from IEX only, which is a small share of US volume, so quotes can be thin early in the session.</li>
-          <li>GitHub can start scheduled runs a few minutes late, so decisions don’t always land exactly on the quarter hour.</li>
-          <li>None of this is investment advice.</li>
-        </ul>
+        <ol className="takeaways">
+          {TAKEAWAYS.map(([title, body]) => (
+            <li key={title}><strong>{title}</strong> {body}</li>
+          ))}
+        </ol>
       </section>
     </>
   )
