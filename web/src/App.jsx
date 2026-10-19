@@ -58,7 +58,7 @@ export default function App() {
         </Routes>
       </main>
       <footer className="footer">
-        <span>Alpha Trade · Michigan Data Science Team</span>
+        <span>Alpha Trade</span>
         <span className="dim">Paper trading only · not investment advice</span>
       </footer>
     </>

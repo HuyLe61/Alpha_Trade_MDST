@@ -8,19 +8,19 @@ import { StatusPill } from '../components/Live.jsx'
 import { REPO } from '../lib/data.js'
 
 const PIPELINE = [
-  ['Wake up', 'GitHub Actions starts the worker every 15 minutes on weekdays. It asks Alpaca whether the market is open and stops if it isn’t.', 'trader/__main__.py'],
-  ['Check the risk limits', 'Skip the cycle if equity is down 5% from yesterday’s close. Halt the agent for good if it’s 30% below its peak.', 'trader/cycle.py'],
-  ['Pull market data', 'Seven days of finished 15-minute IEX bars for each of the 20 tickers, over Alpaca’s REST API.', 'trader/alpaca_io.py'],
-  ['Compute indicators', 'RSI-14, Bollinger bands, EMA-12/26, MACD and relative volume. These are the same formulas used in training.', 'src/data_loader.py'],
-  ['Build the observation', '263 numbers: 12 z-scored features × 20 tickers, plus shares held, net worth, peak net worth and the step count.', 'deploy/alpaca_utils.py'],
-  ['Run the policy', 'The PPO actor network (263 → 256 → 20, tanh output) returns one value per ticker in [−1, 1].', 'trader/policy.py'],
-  ['Size and send orders', 'Buy with a fraction of buying power, capped at 15% of the portfolio per stock. Sell a fraction of the shares held, never short. Ignore anything under $100.', 'trader/cycle.py'],
-  ['Record everything', 'The decision, the orders, fills, positions and equity are written to Supabase, and this site picks them up in real time.', 'trader/sync.py'],
+  ['Wake up', 'GitHub Actions starts the worker every 15 minutes on weekdays. It asks Alpaca whether the market is open and stops if it isn’t.'],
+  ['Check the risk limits', 'Skip the cycle if equity is down 5% from yesterday’s close. Halt the agent for good if it’s 30% below its peak.'],
+  ['Pull market data', 'Seven days of finished 15-minute IEX bars for each of the 20 tickers, over Alpaca’s REST API.'],
+  ['Compute indicators', 'RSI-14, Bollinger bands, EMA-12/26, MACD and relative volume. These are the same formulas used in training.'],
+  ['Build the observation', '263 numbers: 12 z-scored features × 20 tickers, plus shares held, net worth, peak net worth and the step count.'],
+  ['Run the policy', 'The PPO actor network (263 → 256 → 20, tanh output) returns one value per ticker in [−1, 1].'],
+  ['Size and send orders', 'Buy with a fraction of buying power, capped at 15% of the portfolio per stock. Sell a fraction of the shares held, never short. Ignore anything under $100.'],
+  ['Record everything', 'The decision, the orders, fills, positions and equity are written to Supabase, and this site picks them up in real time.'],
 ]
 
 const STACK = [
   ['Agent', 'PyTorch PPO written from scratch: actor-critic, GAE, clipped surrogate objective'],
-  ['Environment', 'Gymnasium AlphaTradeEnv, PnL reward, 0.5% transaction cost'],
+  ['Environment', 'Custom Gymnasium trading environment, PnL reward, 0.5% transaction cost'],
   ['Data', 'yfinance daily bars for training, Alpaca IEX 15-minute bars live'],
   ['Broker', 'Alpaca paper trading API (alpaca-py)'],
   ['Scheduler', 'GitHub Actions cron, one run every 15 minutes'],
@@ -54,7 +54,6 @@ export default function Overview({ data }) {
     <>
       <section className="hero">
         <div className="hero__text">
-          <p className="eyebrow">MDST · University of Michigan</p>
           <h1>A reinforcement-learning agent trading 20 stocks every 15 minutes.</h1>
           <p className="lede">
             Alpha Trade is a PPO policy trained on ten years of S&amp;P 500 prices. It now runs on its own against a
@@ -90,14 +89,13 @@ export default function Overview({ data }) {
       <section className="section">
         <header className="section__head">
           <h2>How one decision is made</h2>
-          <p>These steps run in order every 15 minutes while the market is open. Each one links to the file that does it.</p>
+          <p>These steps run in order every 15 minutes while the market is open.</p>
         </header>
         <ol className="pipeline">
-          {PIPELINE.map(([title, body, file]) => (
+          {PIPELINE.map(([title, body]) => (
             <li key={title} className="pipeline__step">
               <h3>{title}</h3>
               <p>{body}</p>
-              <a className="mono file" href={`${REPO}/blob/main/${file}`}>{file}</a>
             </li>
           ))}
         </ol>
@@ -111,7 +109,7 @@ export default function Overview({ data }) {
         <div className="arch" role="img" aria-label="GitHub Actions runs the trader worker, which talks to the Alpaca API and writes to Supabase. The website reads from Supabase.">
           <div className="arch__node"><span className="mono dim">every 15 min</span><strong>GitHub Actions</strong><span>cron trigger</span></div>
           <div className="arch__edge">runs →</div>
-          <div className="arch__node arch__node--core"><span className="mono dim">python -m trader tick</span><strong>Trader worker</strong><span>policy · risk · orders</span></div>
+          <div className="arch__node arch__node--core"><span className="mono dim">scheduled job</span><strong>Trader worker</strong><span>policy · risk · orders</span></div>
           <div className="arch__edge">⇄ REST</div>
           <div className="arch__node"><span className="mono dim">paper account</span><strong>Alpaca</strong><span>bars · quotes · orders</span></div>
           <div className="arch__edge arch__edge--down">writes ↓</div>
@@ -186,13 +184,9 @@ export default function Overview({ data }) {
               </table>
             </div>
             <p className="panel__lede dim">
-              The loaders now read the header row and pick each column by name, so its position in the file no longer
-              matters. The fix is in <span className="mono">train.ipynb</span>, <span className="mono">load_data.ipynb</span>{' '}
-              and <span className="mono">trader/export_model.py</span>.
+              The data loading now reads the header row and picks each column by name, so its position in the file no
+              longer matters.
             </p>
-            <pre className="snippet"><code>{`df = pd.read_csv(path, header=0,
-                 skiprows=[1, 2], index_col=0)
-df = df[['Open', 'High', 'Low', 'Close', 'Volume']]`}</code></pre>
           </div>
           <div className="panel">
             <h2>2020 validation year</h2>
