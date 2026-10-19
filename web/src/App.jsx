@@ -3,7 +3,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import Overview from './pages/Overview.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import { DemoBanner } from './components/Live.jsx'
-import { REPO, loadAll, subscribe } from './lib/data.js'
+import { loadAll, subscribe } from './lib/data.js'
 
 const REFRESH_MS = 60_000
 
@@ -47,7 +47,6 @@ export default function App() {
         <nav className="nav">
           <NavLink to="/" end>Overview</NavLink>
           <NavLink to="/dashboard">Dashboard</NavLink>
-          <a href={REPO}>GitHub</a>
         </nav>
       </header>
       <main className="page">

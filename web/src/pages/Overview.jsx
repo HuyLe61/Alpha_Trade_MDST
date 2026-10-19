@@ -5,7 +5,6 @@ import EquityChart from '../components/EquityChart.jsx'
 import { DecisionGrid, ScaleLegend } from '../components/Decisions.jsx'
 import { Readouts } from '../components/Tables.jsx'
 import { StatusPill } from '../components/Live.jsx'
-import { REPO } from '../lib/data.js'
 
 const PIPELINE = [
   ['Wake up', 'GitHub Actions starts the worker every 15 minutes on weekdays. It asks Alpaca whether the market is open and stops if it isn’t.'],
@@ -61,7 +60,6 @@ export default function Overview({ data }) {
           </p>
           <div className="hero__actions">
             <Link className="button" to="/dashboard">Open the live dashboard</Link>
-            <a className="button button--quiet" href={REPO}>Read the code</a>
           </div>
           <StatusPill data={data} />
         </div>

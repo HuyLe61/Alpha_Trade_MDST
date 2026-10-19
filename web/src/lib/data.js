@@ -3,8 +3,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { demoData } from './demo.js'
 
-export const REPO = 'https://github.com/HuyLe61/Alpha_Trade_MDST'
-
 const url = import.meta.env.VITE_SUPABASE_URL
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
