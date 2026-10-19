@@ -112,8 +112,8 @@ export default function Overview({ data }) {
             <h2>Model</h2>
             <p>
               Trained on daily bars from 2014 to 2019 and tuned on 2020. On that 2020 validation year it returned{' '}
-              <strong className="mono">+39.6%</strong> with a Sharpe ratio of <strong className="mono">1.00</strong> and a{' '}
-              <strong className="mono">34.3%</strong> max drawdown.
+              <strong className="mono">+110.0%</strong> with a Sharpe ratio of <strong className="mono">1.64</strong> and a{' '}
+              <strong className="mono">37.0%</strong> max drawdown.
             </p>
           </header>
           <dl className="specs">

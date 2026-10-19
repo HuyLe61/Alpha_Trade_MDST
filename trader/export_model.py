@@ -35,8 +35,10 @@ def rebuild_feature_stats(data_dir: Path):
     """Mirror train.ipynb + AlphaTradeEnv.__init__ to recover feat_mean / feat_std."""
     stock_data = {}
     for ticker in TICKERS:
-        df = pd.read_csv(data_dir / f"{ticker}.csv", skiprows=2, index_col="Date", parse_dates=True)
-        df.columns = ["Open", "High", "Low", "Close", "Volume"]
+        # yfinance CSVs are stored as Close, High, Low, Open, Volume; select by name.
+        df = pd.read_csv(data_dir / f"{ticker}.csv", header=0, skiprows=[1, 2], index_col=0, parse_dates=True)
+        df.index.name = "Date"
+        df = df[["Open", "High", "Low", "Close", "Volume"]]
         stock_data[ticker] = df
     stock_data = process_data_with_indicators(stock_data)
     training_data, _, _ = split_data(stock_data)

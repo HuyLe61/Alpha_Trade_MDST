@@ -70,6 +70,5 @@ Local preview: `cd web && npm install && npm run dev`.
 - Every run writes an `agent_cycles` row with its status (`traded`, `no_orders`, `skipped`, `halted`, `error`) and a reason, so you can debug from the dashboard.
 
 ## Known gaps
-- `models/ppo_trading.pt` has no `feat_mean` / `feat_std`, so `deploy/alpaca_live.py` refuses to load it. The export rebuilds them from `data/*.csv` exactly the way `AlphaTradeEnv` computes them.
-- The CSVs in `data/` are stored by yfinance as Close, High, Low, Open, Volume, but `train.ipynb` relabels them as Open, High, Low, Close, Volume. The policy was trained with that column mix-up, while live bars arrive in the true order.
+- Older checkpoints have no `feat_mean` / `feat_std`. For those, the export rebuilds them from `data/*.csv` the same way `AlphaTradeEnv` computes them. `train.ipynb` now saves them.
 - The policy was trained on daily bars and trades 15-minute bars normalized with daily statistics.
