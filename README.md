@@ -2,6 +2,8 @@
 
 A deep reinforcement learning trading bot and backtesting framework. We train a custom PPO (Proximal Policy Optimization) agent from scratch to trade a portfolio of 20 S&P 500 stocks, then deploy it to paper trade via Alpaca.
 
+**Live system:** the agent trades an Alpaca paper account every 15 minutes from GitHub Actions, logs to Supabase, and is shown on a public site (`web/`). See [LIVE_SYSTEM.md](LIVE_SYSTEM.md) for setup.
+
 ## Getting Started
 
 ```bash

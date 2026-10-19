@@ -1,8 +1,8 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
 
 def get_data(tickers, start='2014-01-01', end='2026-01-01'):
+    import yfinance as yf  # imported lazily so the live worker doesn't need yfinance
     stock_data = {}
     for ticker in tickers: 
         df = yf.download(ticker, start=start, end=end) 
