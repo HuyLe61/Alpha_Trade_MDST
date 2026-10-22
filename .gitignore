@@ -14,3 +14,6 @@ web/.env.local
 web/node_modules/
 web/dist/
 .vercel
+
+# Live trader state and order log
+deploy/logs/
