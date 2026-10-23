@@ -1,34 +1,32 @@
 """
 Alpaca Paper Trading
 
-Workflow: Fetches live 15-min bars market data (via IEX WebSocket),
+Workflow: fetches the latest completed 15-minute bars (src/alpaca_intraday.py)
 -> builds an observation
 -> gets an action from the policy
 -> places orders via the Alpaca REST API
 
-TWO CONNECTIONS:
-  - REST API (alpaca_trade_api): used to read account/positions and to
-    submit orders (get_account, list_positions, get_latest_trade,
-    submit_order). These are "request–response" API calls.
-    We send a request, we get one response.
-    API Documentation: https://github.com/alpacahq/alpaca-trade-api-python?tab=readme-ov-file
+The policy is trained on 15-minute bars (train_intraday.py). Every 15 minutes the
+engine reads the last bar that has finished, decides, and trades. In training the
+agent sees bar t and trades at the close of bar t+1; live is the same: the free
+plan's SIP data is 15 minutes behind, so at HH:MM:30 on a quarter hour the newest
+bar we can see is the one that closed 15 minutes ago, and the order goes in now,
+at the close of the bar after it.
 
-  - WebSocket (alpaca_websocket.py): used only for market data. We open
-    one long-lived connection; Alpaca pushes minute bars to us. We
-    aggregate them into 15-min bars and read them in the main loop.
-    WebSocket Documentation: https://alpaca.markets/sdks/python/api_reference/data/stock/live.html
+Everything goes through the REST API (alpaca_trade_api for account, positions and
+orders; alpaca-py for market data). These are "request-response" calls: we send a
+request, we get one response.
+API Documentation: https://github.com/alpacahq/alpaca-trade-api-python?tab=readme-ov-file
 
-
-Every 15 minutes the engine runs: 
-(1) Read latest 15-min bars from the WebSocket fetcher.
+Every 15 minutes, from 9:45 to 15:45 Eastern, the engine runs:
+(1) Read the latest completed 15-minute bars.
 (2) Add technical indicators.
 (3) Build observation.
 (4) Policy predicts action.
 (5) Place orders via REST.
-The WebSocket runs in a background thread the whole time (see alpaca_websocket.py).
 
-Run: python alpaca_live.py
-Config: MODE and TRADE_FREQUENCY_MINUTES below (default paper, every 15 min).
+Run: python deploy/alpaca_live.py
+Config: paper trading by default (ALPACA_BASE_URL in deploy/.env).
 """
 
 import os
@@ -55,7 +53,9 @@ from alpaca_utils import (
 )
 
 # Make sure to install alpaca-py package: pip install alpaca-py
-from alpaca_websocket import IEXStream15MinFetcher
+from src.alpaca_intraday import (
+    make_client, fetch_recent_universe, BAR_MINUTES, EASTERN, SESSION_FIRST_BAR, SESSION_LAST_BAR,
+)
 
 # Load .env file
 load_dotenv(Path(__file__).parent / '.env')
@@ -69,15 +69,22 @@ RISK_PARAMS = {
 }
 
 # Trained PPO policy model 
-DEFAULT_MODEL_PATH = str(Path(__file__).parent.parent / 'models' / 'ppo_trading.pt')
+DEFAULT_MODEL_PATH = str(Path(__file__).parent.parent / 'models' / 'ppo_trading_intraday.pt')
+
+# Seconds past each quarter hour before we ask for data, so the newest visible bar is in.
+CYCLE_OFFSET_SECONDS = 30
+# Skip a cycle if the newest bar is older than this: a bar is missing and the policy would be acting on old data.
+MAX_BAR_AGE_MINUTES = 2 * BAR_MINUTES + 5
 
 class AlpacaPPOTrader:
     """Live trading manager"""
     def __init__(self, api, model_path: str, api_key: str = None, secret_key: str = None):
         self.api = api
         # Include your API keys from Alpaca to .env
-        self._iex_fetcher = IEXStream15MinFetcher(api_key, secret_key)
+        self._data_client = make_client(api_key, secret_key)
         self.running = False
+        self._last_slot = None      # quarter hour of the last finished cycle
+        self._session_open = {}     # date -> market open time
 
         # Performance tracking
         self.start_time = datetime.now()
@@ -97,6 +104,12 @@ class AlpacaPPOTrader:
 
         print(f"Loading model from {model_path}")
         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+
+        if checkpoint.get('bar_minutes') != BAR_MINUTES:
+            raise RuntimeError(
+                f"{model_path} was not trained on {BAR_MINUTES}-minute bars "
+                f"(bar_minutes={checkpoint.get('bar_minutes')}). Train with train_intraday.py."
+            )
 
         obs_dim = checkpoint['obs_shape']
         act_dim = checkpoint['action_shape']
@@ -176,39 +189,49 @@ class AlpacaPPOTrader:
     # Trading cycle: data -> observation -> action -> orders
     def fetch_latest_data(self):
         """
-        Read latest 15-min bars from the WebSocket fetcher
-        Check for any missing tickers
+        Read the latest completed 15-minute bars for every training ticker
+        and add the technical indicators
         """
-        raw = self._iex_fetcher.get_latest_15min_data()
+        raw = fetch_recent_universe(self._data_client, TRAINING_TICKERS)
         if raw is None:
-            print("No 15-min data from IEX stream yet. Wait for next 15-min bar")
+            print("15-minute bars incomplete")
             return None
-        if len(raw) < len(TRAINING_TICKERS):
-            print(f"Only got {len(raw)}/{len(TRAINING_TICKERS)} tickers")
+
+        # Once today's first bar is visible, the newest bar must be recent. (Before that, at the
+        # 9:45 cycle, the newest bar is yesterday's last one, which is expected.)
+        last = next(iter(raw.values())).index[-1]
+        expected = datetime.now(EASTERN).replace(tzinfo=None) - timedelta(minutes=2 * BAR_MINUTES)
+        expected = expected.replace(minute=(expected.minute // 15) * 15, second=0, microsecond=0)
+        if SESSION_FIRST_BAR <= expected.time() <= SESSION_LAST_BAR and last < expected:
+            print(f"Newest bar is {last}, expected {expected} or later. Data is stale")
             return None
         return prepare_features(raw)
 
     def execute_trade(self):
-        """One cycle: get 15-min data, add features, build obs, get action, place orders via REST."""
+        """
+        One cycle: get 15-minute data, add features, build obs, get action, place orders via REST.
+        Returns 'halt' (risk limit hit, stop the engine), 'retry' (could not run, try again soon)
+        or 'done' (cycle finished).
+        """
         print(f"\n{'='*70}")
         print(f"Trade {self.trade_step}  |  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*70}")
 
         if not self.check_risk_limits():
-            return False
+            return 'halt'
 
         portfolio_value = self.get_portfolio_value()
         if portfolio_value is None:
-            print("Can't read portfolio value. Skipping trade")
-            return True
+            print("Can't read portfolio value. Will retry")
+            return 'retry'
 
         print(f"Portfolio value: ${portfolio_value:,.2f}")
 
         # Fetch data
         stock_data = self.fetch_latest_data()
         if stock_data is None:
-            print("Data fetch failed. Skipping trade")
-            return True
+            print("Data fetch failed. Will retry")
+            return 'retry'
 
         # Cancel any open orders from the previous cycle before placing new
         # ones. Pending orders reserve buying power; leaving them open across
@@ -220,24 +243,22 @@ class AlpacaPPOTrader:
         except Exception as e:
             print(f"  Warning: could not cancel open orders: {e}")
 
-        # Observation balance: buying_power / margin_multiplier undoes the 2x
-        # margin inflation so the model sees the same ~1x scale it trained on,
-        # while still correctly reading 0 when no buying power is available.
-        # Order sizing: raw buying_power (what Alpaca enforces).
+        # Balance and order sizing use cash, never margin: in training the agent could only
+        # spend the cash it had, and a paper account's 4x buying power would let it lever up.
         positions = get_current_positions(self.api)
         account = self.api.get_account()
-        cash = float(account.cash)
-        buying_power = float(account.buying_power)
-        margin_multiplier = float(account.multiplier)
+        cash = max(float(account.cash), 0.0)
         initial = self.initial_value or portfolio_value
         max_nw = self.peak_value or portfolio_value
 
-        print(f"Cash: ${cash:,.2f}  |  Buying power: ${buying_power:,.2f}")
+        print(f"Cash: ${cash:,.2f}  |  Buying power: ${float(account.buying_power):,.2f} (not used for sizing)")
 
+        # Step feature: in training it is the position inside a random 1024-bar window (0 to 1),
+        # which has no live meaning, so feed the window's midpoint.
         obs = build_observation(
-            stock_data, balance=buying_power / margin_multiplier, shares_held=positions,
+            stock_data, balance=cash, shares_held=positions,
             net_worth=portfolio_value, max_net_worth=max_nw,
-            current_step=self.trade_step, max_steps=252,
+            current_step=1, max_steps=2,
             initial_balance=initial,
             feat_mean=self.feat_mean, feat_std=self.feat_std,
         )
@@ -254,7 +275,7 @@ class AlpacaPPOTrader:
         orders = place_orders_from_actions(
             self.api, action, TRAINING_TICKERS,
             positions,
-            buying_power=buying_power,
+            buying_power=cash,
             portfolio_value=portfolio_value,
             max_position_size=RISK_PARAMS['max_position_size'],
             min_trade_value=RISK_PARAMS['min_trade_value'],
@@ -263,23 +284,31 @@ class AlpacaPPOTrader:
 
         self.portfolio_history.append({'time': datetime.now(), 'value': portfolio_value})
         self.trade_step += 1
-        return True
+        return 'done'
 
-    def run(self, trade_frequency_minutes: int):
+    def session_open_time(self, now):
+        """Today's market open (from the broker calendar, so early closes and holidays are right)."""
+        today = now.date()
+        if today not in self._session_open:
+            session = self.api.get_calendar(start=str(today), end=str(today))[0]
+            self._session_open[today] = datetime.combine(today, session.open, tzinfo=now.tzinfo)
+        return self._session_open[today]
+
+    def run(self):
         """
-        Start the WebSocket in a background thread, then every
-        trade_frequency_minutes (when market is open) run execute_trade()
+        Every 15 minutes while the market is open, run execute_trade(): first cycle 15 minutes
+        after the open (9:45), last one 15 minutes before the close (15:45).
+        Sleeps through nights, weekends and holidays.
         """
+        step = timedelta(minutes=BAR_MINUTES)
+        offset = timedelta(seconds=CYCLE_OFFSET_SECONDS)
         print(f"{'='*70}")
-        print(f"Trade interval: every {trade_frequency_minutes} min")
-        print(f"Data source: IEX WebSocket (15-min bars)")
-        # Start WebSocket in a background thread so we receive bars while the loop runs.
-        self._iex_fetcher.start() 
+        print(f"Trade interval: every {BAR_MINUTES} min, {CYCLE_OFFSET_SECONDS}s past the quarter hour")
+        print(f"Data source: Alpaca {BAR_MINUTES}-minute bars (SIP, completed bars only)")
         pv = self.get_portfolio_value()
         print(f"Starting portfolio: ${pv:,.2f}\n")
 
         self.running = True
-        last_trade = None
         last_date = None
 
         try:
@@ -292,31 +321,44 @@ class AlpacaPPOTrader:
                     print(f"\n New day - Current portfolio value: ${self.daily_start_value:,.2f}")
                     last_date = now.date()
 
-                # Don't trade when market is closed; sleep 2.5 hours then recheck 
-                # (4pm - 9:30am is 17.5 hours so sleeping for 2.5 hours guarantees we're rerun when market opens)
-                if not self.is_market_open():
-                    nxt, _ = self.get_market_hours()
-                    if nxt:
-                        print(f"Market closed. Next open: {nxt}")
-                    time.sleep(9000) # 2.5 hours = 150 minutes = 9000 seconds
+                try:
+                    clock = self.api.get_clock()
+                    broker_now = clock.timestamp
+                    if not clock.is_open:
+                        wait = (clock.next_open - broker_now).total_seconds() + BAR_MINUTES * 60 + CYCLE_OFFSET_SECONDS
+                        print(f"Market closed. Next cycle in {wait/3600:.1f} h")
+                        time.sleep(min(max(wait, 60), 3600))
+                        continue
+                    first_slot = self.session_open_time(broker_now) + step
+                except Exception as e:
+                    print(f"  Could not read the market clock: {e}")
+                    time.sleep(60)
                     continue
 
-                # Only run a trade cycle if enough time has passed since the last one.
-                elapsed = (now - last_trade).total_seconds() if last_trade else float('inf')
-                if elapsed >= trade_frequency_minutes * 60:
-                    if not self.execute_trade():
-                        print("\n Risk limit breached. Stopping trade cycle")
-                        break
-                    last_trade = now
+                # The cycle we are in: the latest quarter hour whose offset has passed.
+                shifted = broker_now - offset
+                slot = shifted.replace(minute=(shifted.minute // 15) * 15, second=0, microsecond=0)
 
-                    cv = self.get_portfolio_value()
-                    if self.initial_value and cv:
-                        tot = (cv - self.initial_value) / self.initial_value * 100
-                        day = (cv - self.daily_start_value) / self.daily_start_value * 100
-                        print(f"Total return: {tot:+.2f}%  |  Today's return: {day:+.2f}%")
-                else:
-                    time.sleep(60)
-        
+                if slot < first_slot or slot == self._last_slot:
+                    next_run = max(slot + step, first_slot) + offset
+                    time.sleep(max(1, (next_run - broker_now).total_seconds()))
+                    continue
+
+                result = self.execute_trade()
+                if result == 'halt':
+                    print("\n Risk limit breached. Stopping trade cycle")
+                    break
+                if result == 'retry':
+                    time.sleep(60)  # same slot again until it works or the next quarter hour arrives
+                    continue
+                self._last_slot = slot
+
+                cv = self.get_portfolio_value()
+                if self.initial_value and cv:
+                    tot = (cv - self.initial_value) / self.initial_value * 100
+                    day = (cv - self.daily_start_value) / self.daily_start_value * 100
+                    print(f"Total return: {tot:+.2f}%  |  Today's return: {day:+.2f}%")
+
         # Handle keyboard interrupt and exceptions
         except KeyboardInterrupt:
             print("\n\n  Interrupted by user")
@@ -325,7 +367,6 @@ class AlpacaPPOTrader:
             import traceback; traceback.print_exc()
         finally:
             self.running = False
-            self._iex_fetcher.stop()
             self._print_summary()
 
     def _print_summary(self):
@@ -343,13 +384,14 @@ class AlpacaPPOTrader:
         print(f"{'='*70}\n")
 
 
-TRADE_FREQUENCY_MINUTES = 15
-
 def main():
     """Load env, connect to Alpaca REST, then run the trader."""
     api_key = os.getenv('ALPACA_API_KEY')
     secret = os.getenv('ALPACA_SECRET_KEY')
-    base = os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets')
+    base = os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets').rstrip('/')
+    # The REST client appends /v2 itself; a base URL that already ends in /v2 gives /v2/v2 and a 404.
+    if base.endswith('/v2'):
+        base = base[:-3]
 
     if not api_key or not secret:
         print("  Error: Alpaca API keys not found!")
@@ -374,7 +416,7 @@ def main():
         api_key=api_key,
         secret_key=secret,
     )
-    trader.run(trade_frequency_minutes=TRADE_FREQUENCY_MINUTES)
+    trader.run()
 
 
 if __name__ == '__main__':
