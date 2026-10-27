@@ -311,6 +311,11 @@ class AlpacaPPOTrader:
         self.running = True
         last_date = None
 
+        # Don't trade the quarter hour we start in (it may already have been traded before a restart):
+        # the first cycle is the next one.
+        start = self.api.get_clock().timestamp.floor('s').to_pydatetime() - offset
+        self._last_slot = start.replace(minute=(start.minute // 15) * 15, second=0, microsecond=0)
+
         try:
             while self.running:
                 now = datetime.now()
@@ -323,7 +328,9 @@ class AlpacaPPOTrader:
 
                 try:
                     clock = self.api.get_clock()
-                    broker_now = clock.timestamp
+                    # The broker clock is a pandas Timestamp with nanoseconds, which .replace(microsecond=0)
+                    # keeps; drop them so the same quarter hour always gives the same slot.
+                    broker_now = clock.timestamp.floor('s').to_pydatetime()
                     if not clock.is_open:
                         wait = (clock.next_open - broker_now).total_seconds() + BAR_MINUTES * 60 + CYCLE_OFFSET_SECONDS
                         print(f"Market closed. Next cycle in {wait/3600:.1f} h")
@@ -386,30 +393,45 @@ class AlpacaPPOTrader:
 
 def main():
     """Load env, connect to Alpaca REST, then run the trader."""
-    api_key = os.getenv('ALPACA_API_KEY')
-    secret = os.getenv('ALPACA_SECRET_KEY')
+    # The intraday agent trades its own paper account. ALPACA_API_KEY / ALPACA_SECRET_KEY belong to the
+    # minimum-variance trader (min_variance_live.py), and two strategies must never share an account.
+    api_key = os.getenv('ALPACA_INTRADAY_API_KEY')
+    secret = os.getenv('ALPACA_INTRADAY_SECRET_KEY')
     base = os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets').rstrip('/')
     # The REST client appends /v2 itself; a base URL that already ends in /v2 gives /v2/v2 and a 404.
     if base.endswith('/v2'):
         base = base[:-3]
+    if 'paper' not in base:
+        print(f"  Error: refusing to run against {base}: this agent is for paper trading only")
+        return
 
     if not api_key or not secret:
         print("  Error: Alpaca API keys not found!")
-        print("  Create backtest/.env with ALPACA_API_KEY and ALPACA_SECRET_KEY")
+        print("  Add ALPACA_INTRADAY_API_KEY and ALPACA_INTRADAY_SECRET_KEY to deploy/.env")
         return
-    
+
     # Initialize Alpaca REST API
     api = tradeapi.REST(api_key, secret, base, api_version='v2')
-    
-    # Check connection 
+
+    # Check connection
     try:
         acct = api.get_account()
-        print(f"Connected — status: {acct.status}")
+        print(f"Connected — status: {acct.status}  |  account ...{acct.account_number[-4:]}")
         print(f"Portfolio : ${float(acct.portfolio_value):,.2f}")
         print(f"Buying pwr: ${float(acct.buying_power):,.2f}")
     except Exception as e:
         print(f"  Connection failed: {e}")
         return
+
+    if os.getenv('ALPACA_API_KEY'):
+        try:
+            other = tradeapi.REST(os.getenv('ALPACA_API_KEY'), os.getenv('ALPACA_SECRET_KEY'), base,
+                                  api_version='v2').get_account()
+            if other.account_number == acct.account_number:
+                print("  Error: the intraday keys point at the minimum-variance account. Use the other paper account's keys.")
+                return
+        except Exception:
+            pass  # the other account being unreachable doesn't stop this one
 
     trader = AlpacaPPOTrader(
         api, DEFAULT_MODEL_PATH,
