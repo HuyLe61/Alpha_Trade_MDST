@@ -47,7 +47,7 @@ def prepare_features(stock_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFr
         if n < MIN_BARS_FOR_INDICATORS:
             print(
                 f"  Indicator warm-up: {ticker} has {n}/{MIN_BARS_FOR_INDICATORS} bars. "
-                f"Waiting for more 15-min bars..."
+                f"Waiting for more bars..."
             )
             return None
 

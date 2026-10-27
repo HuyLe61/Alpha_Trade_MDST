@@ -29,6 +29,9 @@ def main():
     if not config.ALPACA_PAPER:
         sys.exit("Refusing to run: ALPACA_PAPER=false. This worker is for paper trading only.")
 
+    if config.ALPACA_API_KEY and config.ALPACA_API_KEY == config.MIN_VARIANCE_API_KEY:
+        sys.exit("Refusing to run: ALPACA_INTRADAY_API_KEY is the minimum-variance account's key.")
+
     alpaca = Alpaca(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=True)
     db = Database(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, write=not args.dry_run)
     if not db.online:
