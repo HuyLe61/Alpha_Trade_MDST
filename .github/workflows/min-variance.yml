@@ -1,0 +1,52 @@
+# Daily long-only minimum-variance rebalance on its own Alpaca paper account
+# (deploy/min_variance_live.py --once).
+#
+# The rebalance is due at the open + 30 minutes (10:00:30 ET on a normal day).
+# Runs at 14:35, 15:35 and 16:35 UTC on weekdays: in EDT the first one trades,
+# in EST the second does (14:35 UTC is 9:35 ET, too early), and the rest are
+# backups for a dropped scheduled run. A run that finds today's rebalance
+# orders already on the account does nothing.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   ALPACA_API_KEY, ALPACA_SECRET_KEY            the min-variance paper account
+
+name: min-variance
+
+on:
+  schedule:
+    - cron: "35 14-16 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute today's target and orders without submitting them"
+        type: boolean
+        default: false
+
+concurrency:
+  group: min-variance
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: deploy/requirements-min-variance.txt
+      - run: pip install -r deploy/requirements-min-variance.txt
+      - name: Rebalance
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: python -u deploy/min_variance_live.py ${{ inputs.dry_run && '--dry-run' || '--once' }}
+      - name: Keep the order log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: min-variance-orders-${{ github.run_id }}
+          path: deploy/logs/
+          if-no-files-found: ignore

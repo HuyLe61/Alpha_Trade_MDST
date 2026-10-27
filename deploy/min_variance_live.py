@@ -10,9 +10,12 @@ computes target weights and trades the account to them: sells first, then buys w
 sells free up. It never uses margin and keeps 2% in cash for price moves between quote and fill.
 
 State (the last rebalance date) and every order are written to deploy/logs/, so a restart neither
-trades twice in a day nor loses the history.
+trades twice in a day nor loses the history. Orders are also tagged "mv-<date>-<ticker>-<side>", so a
+scheduled run (--once, see .github/workflows/min-variance.yml) can tell from the account alone that
+today's rebalance is done.
 
     python deploy/min_variance_live.py             # run forever, rebalance daily
+    python deploy/min_variance_live.py --once      # rebalance now if it is due and not yet done, then exit
     python deploy/min_variance_live.py --dry-run   # compute today's target and orders, submit nothing
 """
 
@@ -77,6 +80,7 @@ class MinVarianceTrader:
         self.api = api
         self.data = data_client
         self.dry_run = dry_run
+        self.tag = f"mv-{datetime.now():%Y%m%d}-"
 
     def target_weights(self):
         """Same computation as the backtest: last 60 trading days of 15-minute returns."""
@@ -104,7 +108,8 @@ class MinVarianceTrader:
                'order_id': '', 'status': 'dry-run' if self.dry_run else 'submitted'}
         print(f"  {side.upper():4s} {qty:>5} {ticker:<5} ~${qty * price:>10,.2f}  (target {weight:6.1%})")
         if not self.dry_run:
-            order = self.api.submit_order(symbol=ticker, qty=qty, side=side, type='market', time_in_force='day')
+            order = self.api.submit_order(symbol=ticker, qty=qty, side=side, type='market', time_in_force='day',
+                                          client_order_id=f"{self.tag}{ticker}-{side}")
             row['order_id'] = order.id
         log_order(row)
         return row['order_id']
@@ -160,6 +165,33 @@ class MinVarianceTrader:
         print("Target weights: " + ", ".join(f"{t} {w:.1%}" for t, w in sorted(weights.items(), key=lambda kv: -kv[1]) if w > 0.001))
         return True
 
+    def due_today(self):
+        """(due, reason): the market is open, it is past open + 30 min, and today has no rebalance orders yet."""
+        clock = self.api.get_clock()
+        if not clock.is_open:
+            return False, f"market closed (next open {clock.next_open})"
+        now = clock.timestamp
+        today = str(now.date())
+        session = self.api.get_calendar(start=today, end=today)[0]
+        opened = datetime.combine(now.date(), session.open, tzinfo=now.tzinfo)
+        if now < opened + REBALANCE_AFTER_OPEN:
+            return False, f"too early: rebalance is due at {(opened + REBALANCE_AFTER_OPEN):%H:%M:%S} ET"
+        self.tag = f"mv-{now:%Y%m%d}-"
+        orders = self.api.list_orders(status='all', after=opened.isoformat(), limit=500)
+        if any((o.client_order_id or '').startswith(self.tag) for o in orders):
+            return False, "already rebalanced today"
+        return True, None
+
+    def run_once(self):
+        due, reason = self.due_today()
+        if not due:
+            print(f"Nothing to do: {reason}")
+            return True
+        ok = self.rebalance()
+        if ok:
+            print(f"Done. Portfolio ${float(self.api.get_account().portfolio_value):,.2f}")
+        return ok
+
     def run(self):
         state = load_state()
         print(f"Daily minimum-variance rebalance at open + {REBALANCE_AFTER_OPEN}. Last rebalance: {state.get('last_rebalance', 'never')}")
@@ -173,6 +205,7 @@ class MinVarianceTrader:
                     time.sleep(min(max(wait, 60), 3600))
                     continue
                 today = str(now.date())
+                self.tag = f"mv-{now:%Y%m%d}-"
                 session = self.api.get_calendar(start=today, end=today)[0]
                 due = datetime.combine(now.date(), session.open, tzinfo=now.tzinfo) + REBALANCE_AFTER_OPEN
                 if state.get('last_rebalance') == today:
@@ -198,6 +231,7 @@ class MinVarianceTrader:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true', help='compute and print one rebalance, submit nothing')
+    ap.add_argument('--once', action='store_true', help='rebalance if due and not done today, then exit (for a scheduler)')
     args = ap.parse_args()
 
     load_dotenv(Path(__file__).parent / '.env')
@@ -214,6 +248,8 @@ def main():
     trader = MinVarianceTrader(api, make_client(key, secret), dry_run=args.dry_run)
     if args.dry_run:
         trader.rebalance()
+    elif args.once:
+        sys.exit(0 if trader.run_once() else 1)
     else:
         trader.run()
 

@@ -17,7 +17,7 @@ from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, GetPortfolioHistoryRequest, MarketOrderRequest
+from alpaca.trading.requests import GetCalendarRequest, GetOrdersRequest, GetPortfolioHistoryRequest, MarketOrderRequest
 
 
 def _f(v):
@@ -31,7 +31,7 @@ def _enum(v):
 class Alpaca:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True):
         if not api_key or not secret_key:
-            raise RuntimeError("ALPACA_API_KEY / ALPACA_SECRET_KEY are not set")
+            raise RuntimeError("ALPACA_INTRADAY_API_KEY / ALPACA_INTRADAY_SECRET_KEY are not set")
         self.trading = TradingClient(api_key, secret_key, paper=paper)
         self.data = StockHistoricalDataClient(api_key, secret_key)
 
@@ -49,6 +49,11 @@ class Alpaca:
             "last_equity": _f(a.last_equity),
             "multiplier": _f(a.multiplier) or 1.0,
         }
+
+    def calendar(self, day):
+        """Today's session (open/close times, ET) or None on a market holiday."""
+        days = self.trading.get_calendar(GetCalendarRequest(start=day, end=day))
+        return days[0] if days else None
 
     def positions(self) -> List[dict]:
         return [{
