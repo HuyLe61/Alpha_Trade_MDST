@@ -9,3 +9,11 @@ deploy/.env
 webapp/backend/stocks.db
 webapp/frontend/node_modules/
 webapp/frontend/dist/
+trader/.env
+web/.env.local
+web/node_modules/
+web/dist/
+.vercel
+
+# Live trader state and order log
+deploy/logs/

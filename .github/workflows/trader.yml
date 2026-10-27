@@ -1,0 +1,56 @@
+# Runs the intraday PPO agent against its own Alpaca paper account.
+#
+# Every 15 minutes on weekdays between 13:00 and 21:59 UTC, which covers
+# 9:30-16:00 New York time in both EDT and EST. The worker checks Alpaca's
+# market clock itself, so runs outside the session (and on holidays) only sync.
+# GitHub often starts scheduled runs several minutes late, and sometimes drops
+# one; each run trades the quarter-hour slot it lands in, at most once.
+# Runs fire 2 minutes past the quarter hour to avoid the busy top of the hour.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   ALPACA_INTRADAY_API_KEY, ALPACA_INTRADAY_SECRET_KEY   the intraday paper account
+#   ALPACA_API_KEY                                        the min-variance account's key, only to
+#                                                         check the two accounts differ
+# Optional, for the showcase site:
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY               Project Settings -> API
+
+name: trader
+
+on:
+  schedule:
+    - cron: "2,17,32,47 13-21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "tick | cycle | sync | backfill"
+        default: tick
+      dry_run:
+        description: "Compute actions without sending orders or writing to the database"
+        type: boolean
+        default: false
+
+# Never let two runs trade at the same time.
+concurrency:
+  group: trader
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: trader/requirements.txt
+      - run: pip install -r trader/requirements.txt
+      - name: Run worker
+        env:
+          ALPACA_INTRADAY_API_KEY: ${{ secrets.ALPACA_INTRADAY_API_KEY }}
+          ALPACA_INTRADAY_SECRET_KEY: ${{ secrets.ALPACA_INTRADAY_SECRET_KEY }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -m trader ${{ inputs.command || 'tick' }} ${{ inputs.dry_run && '--dry-run' || '' }}

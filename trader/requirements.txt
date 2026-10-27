@@ -1,0 +1,7 @@
+# Live worker only (no torch / yfinance). See trader/export_model.py for why.
+numpy
+pandas==3.0.0
+alpaca-py==0.43.2
+requests
+python-dotenv
+pytz  # alpaca-py imports it; pandas 3 no longer pulls it in
