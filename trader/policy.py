@@ -15,6 +15,7 @@ class Policy:
         self.feat_mean, self.feat_std = z["feat_mean"], z["feat_std"]
         self.obs_dim, self.act_dim = int(z["obs_dim"]), int(z["act_dim"])
         self.version = str(z["version"])
+        self.bar_minutes = int(z["bar_minutes"]) if "bar_minutes" in z else 0
 
     def act(self, obs: np.ndarray) -> np.ndarray:
         """Deterministic action, same as AlpacaPPOTrader.predict: tanh(actor mean)."""

@@ -5,8 +5,13 @@ import pandas as pd
 
 class AlphaTradeEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
-    def __init__(self, stock_data, transaction_cost_percent=0.005):
+    def __init__(self, stock_data, transaction_cost_percent=0.005, episode_length=None, random_start=False):
+        # episode_length / random_start: train on random windows of that many steps instead of always
+        # replaying the data from step 0. Needed when the data is much longer than one PPO rollout
+        # (e.g. years of 15-minute bars). The defaults keep the original full-length episodes.
         super().__init__()
+        self.episode_length = episode_length
+        self.random_start = random_start
 
         self.stock_data = {ticker: df for ticker, df in stock_data.items() if not df.empty}
         self.tickers = list(self.stock_data.keys())
@@ -35,6 +40,8 @@ class AlphaTradeEnv(gym.Env):
         self.total_sales_value = {ticker: 0 for ticker in self.tickers}
         self.current_step = 0
         self.max_steps = max(0, min(len(df) for df in self.stock_data.values()) - 1)
+        self._start = 0
+        self._end = self.max_steps
         self.transaction_cost_percent = transaction_cost_percent
 
         # Pre-compute feature normalization stats (z-score) so raw prices/volumes
@@ -54,9 +61,17 @@ class AlphaTradeEnv(gym.Env):
         self.shares_held = {ticker: 0 for ticker in self.tickers}
         self.total_shares_sold = {ticker: 0 for ticker in self.tickers}
         self.total_sales_value = {ticker: 0 for ticker in self.tickers}
-        self.current_step = 0
 
-        return self._next_observation(), {} 
+        # Pick the window this episode covers
+        self._start, self._end = 0, self.max_steps
+        if self.episode_length:
+            length = min(self.episode_length, self.max_steps)
+            if self.random_start:
+                self._start = int(self.np_random.integers(0, self.max_steps - length + 1))
+            self._end = self._start + length
+        self.current_step = self._start
+
+        return self._next_observation(), {}
 
     def _next_observation(self):
         # Initialize the frame 
@@ -95,7 +110,7 @@ class AlphaTradeEnv(gym.Env):
         max_net_worth_norm = np.clip(self.max_net_worth / self.initial_balance, -10.0, 10.0)
         frame[-2] = max_net_worth_norm
 
-        step_norm = np.clip(self.current_step / max(self.max_steps, 1), 0.0, 1.0)
+        step_norm = np.clip((self.current_step - self._start) / max(self._end - self._start, 1), 0.0, 1.0)
         frame[-1] = step_norm
 
         # Final check: replace any remaining NaN or Inf values
@@ -108,8 +123,8 @@ class AlphaTradeEnv(gym.Env):
         self.current_step += 1  
         
         # Check if the episode is done (reached max steps) 
-        if self.current_step >= self.max_steps: 
-            return self._next_observation(), 0.0, True, False, {} 
+        if self.current_step >= self._end:
+            return self._next_observation(), 0.0, True, False, {}
         
         # Flatten action if it comes from DummyVecEnv (2D array)
         if isinstance(action, np.ndarray):
@@ -164,7 +179,7 @@ class AlphaTradeEnv(gym.Env):
         # Clip reward to prevent extreme values that can cause NaN
         reward = np.clip(reward, -10.0, 10.0)
         # Done if negative net worth or reached max steps
-        done = self.net_worth <= 0 or self.current_step >= self.max_steps 
+        done = self.net_worth <= 0 or self.current_step >= self._end
 
         obs = self._next_observation()
         return obs, reward, done, False, {}

@@ -11,7 +11,7 @@ rebuilt exactly the way AlphaTradeEnv computes them: concatenate every training
 ticker's feature rows (2009-2019 split) and take the per-column mean / std.
 
 Run (needs torch, so use the training environment):
-    python -m trader.export_model --checkpoint models/ppo_trading.pt
+    python -m trader.export_model --checkpoint models/ppo_trading_intraday.pt
 """
 
 import argparse
@@ -55,7 +55,7 @@ def main():
     import torch
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", default=str(ROOT / "models" / "ppo_trading.pt"))
+    parser.add_argument("--checkpoint", default=str(ROOT / "models" / "ppo_trading_intraday.pt"))
     parser.add_argument("--data-dir", default=str(ROOT / "data"))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     args = parser.parse_args()
@@ -77,6 +77,8 @@ def main():
         "feat_std": np.asarray(feat_std, dtype=np.float32),
         "obs_dim": np.int64(ckpt["obs_shape"]),
         "act_dim": np.int64(ckpt["action_shape"]),
+        # The worker trades 15-minute bars and refuses a policy trained on anything else
+        "bar_minutes": np.int64(ckpt.get("bar_minutes", 0)),
     }
     digest = hashlib.sha256(b"".join(a.tobytes() for a in arrays.values())).hexdigest()[:12]
     arrays["version"] = np.array(f"{Path(args.checkpoint).stem}-{digest}")

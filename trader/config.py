@@ -26,11 +26,14 @@ RISK = {
 }
 
 BAR_MINUTES = 15
-BAR_LOOKBACK_DAYS = 7  # enough 15-min bars for the 26-period EMA / 20-period bands
-MAX_STEPS = 252        # step normalizer used in the observation, as in alpaca_live.py
+BAR_LOOKBACK_DAYS = 20       # calendar days of 15-min bars, as in deploy/alpaca_live.py
+CYCLE_OFFSET_SECONDS = 30    # a run belongs to the latest quarter hour at least 30s old
 
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
-ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+# The intraday agent trades its own paper account. ALPACA_API_KEY / ALPACA_SECRET_KEY belong to
+# the minimum-variance trader (deploy/min_variance_live.py); two strategies never share an account.
+ALPACA_API_KEY = os.getenv("ALPACA_INTRADAY_API_KEY")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_INTRADAY_SECRET_KEY")
+MIN_VARIANCE_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_PAPER = os.getenv("ALPACA_PAPER", "true").lower() != "false"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")

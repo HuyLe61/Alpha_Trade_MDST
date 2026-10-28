@@ -1,0 +1,5 @@
+# Scheduled min-variance trader only (no torch / yfinance).
+-r ../trader/requirements.txt
+alpaca-trade-api==3.2.0
+urllib3==1.26.20
+websocket-client==1.9.0
