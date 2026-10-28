@@ -113,7 +113,7 @@ export function demoData() {
         ts: t.toISOString(),
         status: planned.length ? 'traded' : 'no_orders',
         reason: planned.length ? null : 'all actions below trade thresholds',
-        model_version: 'ppo_trading-e273b4a12cbb',
+        model_version: 'ppo_trading_intraday-aef2e352be5d',
         portfolio_value: equity,
         actions,
         planned_orders: planned,

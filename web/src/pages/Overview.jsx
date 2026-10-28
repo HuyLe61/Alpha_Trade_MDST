@@ -7,20 +7,20 @@ import { Readouts } from '../components/Tables.jsx'
 import { StatusPill } from '../components/Live.jsx'
 
 const PIPELINE = [
-  ['Wake up', 'GitHub Actions starts the worker every 15 minutes on weekdays. It asks Alpaca whether the market is open and stops if it isn’t.'],
+  ['Wake up', 'GitHub Actions starts the worker every 15 minutes on weekdays. It asks Alpaca whether the market is open and trades each quarter-hour slot at most once.'],
   ['Check the risk limits', 'Skip the cycle if equity is down 5% from yesterday’s close. Halt the agent for good if it’s 30% below its peak.'],
-  ['Pull market data', 'Seven days of finished 15-minute IEX bars for each of the 20 tickers, over Alpaca’s REST API.'],
+  ['Pull market data', 'Recent finished 15-minute bars for each of the 20 tickers from Alpaca’s market-data API.'],
   ['Compute indicators', 'RSI-14, Bollinger bands, EMA-12/26, MACD and relative volume. These are the same formulas used in training.'],
   ['Build the observation', '263 numbers: 12 z-scored features × 20 tickers, plus shares held, net worth, peak net worth and the step count.'],
   ['Run the policy', 'The trained agent returns one value per ticker, from −1 (sell everything) to +1 (buy with all buying power).'],
-  ['Size and send orders', 'Buy with a fraction of buying power, capped at 15% of the portfolio per stock. Sell a fraction of the shares held, never short. Ignore anything under $100.'],
+  ['Size and send orders', 'Buy with a fraction of the cash on hand, never margin, capped at 15% of the portfolio per stock. Sell a fraction of the shares held, never short. Ignore anything under $100.'],
   ['Record everything', 'The decision, the orders, fills, positions and equity are written to Supabase, and this site picks them up in real time.'],
 ]
 
 const STACK = [
   ['Agent', 'PyTorch PPO written from scratch: actor-critic, GAE, clipped surrogate objective'],
   ['Environments', 'Two custom Gymnasium environments: one trades shares for a return reward, one sets portfolio weights for a Sharpe reward'],
-  ['Data', 'Yahoo Finance daily bars for training, Alpaca IEX 15-minute bars live'],
+  ['Data', 'Yahoo Finance daily bars for the backtests, Alpaca 15-minute bars to train and run the live agent'],
   ['Broker', 'Alpaca paper trading API (alpaca-py)'],
   ['Scheduler', 'GitHub Actions cron, one run every 15 minutes'],
   ['Database', 'Supabase Postgres with row-level security and Realtime'],
@@ -55,9 +55,9 @@ const BEST_RETURN = Math.max(...BACKTEST.map((r) => r[1]))
 const TAKEAWAYS = [
   ['Holding everything beat both agents.', 'Owning all 20 stocks in equal amounts returned +108% from 2021 to 2024, with the best Sharpe (1.12) and a smaller drawdown than either agent.'],
   ['The reward sets the personality.', 'Rewarding raw returns produced a concentrated, high-swing trader. Rewarding the Sharpe ratio produced a diversified one with a better Sharpe (1.07 vs 0.83) and a smaller drawdown, for about 7 points less return.'],
-  ['Lower risk has a price.', 'The minimum-variance portfolio had the smallest drawdown (23.6%) but returned about half as much as equal weight.'],
+  ['Lower risk has a price.', 'The minimum-variance portfolio had the smallest drawdown (23.6%) but returned about half as much as equal weight. Its steadiness is why a daily minimum-variance trader now runs on a second paper account.'],
   ['One backtest proves little.', 'Retraining the return-reward agent with different random seeds moved its 2020 result anywhere from +31% to +110%.'],
-  ['Live is not the backtest.', 'The live agent learned from daily bars but trades 15-minute bars, so its paper results may not match the test period. It trades paper money, and none of this is investment advice.'],
+  ['Live is a harder test.', 'Retrained on 15-minute bars, the live agent showed no edge after trading costs in our follow-up research, so its paper record is an experiment, not a forecast. It trades paper money, and none of this is investment advice.'],
 ]
 
 export default function Overview({ data }) {
@@ -68,8 +68,9 @@ export default function Overview({ data }) {
           <h1>A reinforcement-learning agent trading 20 stocks every 15 minutes.</h1>
           <p className="lede">
             Alpha Trade trains reinforcement-learning agents with PPO on daily prices for 20 large S&amp;P 500 stocks
-            and compares two reward designs. The return-reward agent now trades a $100k Alpaca paper account on its
-            own. Each tile on the right is one of its outputs from the last decision.
+            and compares two reward designs. A version of the return-reward agent, retrained on 15-minute bars, now
+            trades an Alpaca paper account on its own. Each tile on the right is one of its outputs from the last
+            decision.
           </p>
           <div className="hero__actions">
             <Link className="button" to="/dashboard">Open the live dashboard</Link>
@@ -96,7 +97,7 @@ export default function Overview({ data }) {
             <article key={m.name} className="panel model">
               <div className="model__head">
                 <h3>{m.name}</h3>
-                {m.live && <span className="badge">Trading the paper account</span>}
+                {m.live && <span className="badge">Live on 15-minute bars</span>}
               </div>
               <p>{m.how}</p>
               <p className="dim">{m.habit}</p>
